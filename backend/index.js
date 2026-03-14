@@ -1,8 +1,9 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
+const { deepClean } = require('./utils/moderation'); // Advanced Heuristic Filter
 const { generateAnonymousId } = require('./utils/crypto');
-require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -52,13 +53,31 @@ app.post('/api/auth/mask', async (req, res) => {
   }
 });
 
-// 1. Channel & Category Management
+// 1. Campus Hierarchy Orchestration
+app.get('/api/colleges', async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin.from('colleges').select('*').order('name');
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/colleges', async (req, res) => {
+  const { name, icon } = req.body;
+  try {
+    const { data, error } = await supabaseAdmin.from('colleges').insert([{ name, icon }]).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/categories', async (req, res) => {
   try {
-    const { data, error } = await supabaseAdmin
-      .from('categories')
-      .select('*')
-      .order('name');
+    const { data, error } = await supabaseAdmin.from('categories').select('*, colleges(name, icon)').order('name');
     if (error) throw error;
     res.json(data);
   } catch (err) {
@@ -67,13 +86,9 @@ app.get('/api/categories', async (req, res) => {
 });
 
 app.post('/api/categories', async (req, res) => {
-  const { name, icon } = req.body;
+  const { name, icon, collegeId } = req.body;
   try {
-    const { data, error } = await supabaseAdmin
-      .from('categories')
-      .insert([{ name, icon }])
-      .select()
-      .single();
+    const { data, error } = await supabaseAdmin.from('categories').insert([{ name, icon, college_id: collegeId }]).select().single();
     if (error) throw error;
     res.status(201).json(data);
   } catch (err) {
@@ -85,7 +100,7 @@ app.get('/api/channels', async (req, res) => {
   try {
     const { data, error } = await supabaseAdmin
       .from('channels')
-      .select('*, categories(name, icon)')
+      .select('*, categories(*, colleges(*))')
       .eq('status', 'active');
     if (error) throw error;
     res.json(data);
@@ -95,11 +110,11 @@ app.get('/api/channels', async (req, res) => {
 });
 
 app.post('/api/channels', async (req, res) => {
-  const { name, icon, categoryId, description } = req.body;
+  const { name, icon, categoryId, isGlobal, description } = req.body;
   try {
     const { data, error } = await supabaseAdmin
       .from('channels')
-      .insert([{ name, icon, category_id: categoryId, description }])
+      .insert([{ name, icon, category_id: categoryId, is_global: isGlobal, description }])
       .select()
       .single();
     if (error) throw error;
@@ -111,13 +126,16 @@ app.post('/api/channels', async (req, res) => {
 
 // Route to post a message (Handles the anonymity "Safety Bridge")
 app.post('/api/messages', async (req, res) => {
-  const { userId, content, channelId } = req.body;
+  const { userId, content, channelId, replyToId } = req.body;
 
   if (!userId || !content) {
     return res.status(400).json({ error: 'User ID and content are required' });
   }
 
   try {
+    // Scrub the message content for profanity using Advanced Heuristic AI
+    const cleanContent = deepClean(content.trim());
+
     const maskId = generateAnonymousId(userId);
 
     // Verify user is not banned before allowing message
@@ -148,7 +166,7 @@ app.post('/api/messages', async (req, res) => {
     const { data, error } = await supabaseAdmin
       .from('messages')
       .insert([
-        { sender_id: maskId, content: content, channel_id: channelId }
+        { sender_id: maskId, content: cleanContent, channel_id: channelId, reply_to_id: replyToId || null }
       ]);
 
     if (error) throw error;

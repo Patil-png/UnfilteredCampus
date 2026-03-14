@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, Dimensions, StatusBar, SafeAreaView, Platform } from 'react-native';
+import {
+  View, Text, TouchableOpacity, StyleSheet, Alert,
+  ActivityIndicator, Dimensions, StatusBar, SafeAreaView
+} from 'react-native';
 import { supabase } from '../supabaseClient';
 import Checkbox from 'expo-checkbox';
 
@@ -11,17 +14,16 @@ export default function LoginScreen({ onLoginSuccess }) {
 
   const handleGuestSignIn = async () => {
     if (!agreed) {
-      Alert.alert('Protocol Required', 'Please accept the community guidelines to enter.');
+      Alert.alert('Required', 'Please accept the community guidelines to continue.');
       return;
     }
-
     setLoading(true);
     try {
       const { data, error } = await supabase.auth.signInAnonymously();
       if (error) throw error;
       if (data.session) onLoginSuccess(data.session.user);
     } catch (error) {
-      Alert.alert('Access Error', error.message);
+      Alert.alert('Error', error.message);
     } finally {
       setLoading(false);
     }
@@ -29,65 +31,93 @@ export default function LoginScreen({ onLoginSuccess }) {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" />
-      
-      {/* Soft Background Accents */}
-      <View style={styles.topOrb} />
-      <View style={styles.bottomOrb} />
-      
-      <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FAFAFA" />
+
+      {/* Decorative orbs */}
+      <View style={styles.orbTopRight} />
+      <View style={styles.orbBottomLeft} />
+
+      <SafeAreaView style={styles.safe}>
         <View style={styles.content}>
-          <View style={styles.header}>
-            <View style={styles.accentBadge}>
-              <Text style={styles.badgeText}>BETA ACCESS</Text>
-            </View>
-            <Text style={styles.title}>Unfiltered</Text>
-            <Text style={styles.subtitle}>Campus Community Hub</Text>
+
+          {/* Beta Badge */}
+          <View style={styles.betaBadge}>
+            <Text style={styles.betaText}>✦ BETA</Text>
           </View>
 
-          <View style={styles.heroSection}>
-            <Text style={styles.heroLine}>Authentic.</Text>
-            <Text style={styles.heroLine}>Anonymous.</Text>
-            <Text style={[styles.heroLine, { color: '#4F46E5' }]}>Always Safe.</Text>
-            <Text style={styles.heroDescription}>
-              Join the private circle of your university. Speak your truth without the noise.
+          {/* Hero */}
+          <View style={styles.logoWrap}>
+            <Text style={styles.logoEmoji}>🎓</Text>
+          </View>
+          <Text style={styles.appName}>Unfiltered</Text>
+          <Text style={styles.tagline}>Campus Community Hub</Text>
+
+          {/* Value Props */}
+          <View style={styles.pillsRow}>
+            {['Anonymous', 'Safe', 'Real Talk'].map((tag, i) => (
+              <View key={i} style={[styles.pill, i === 2 && styles.pillAccent]}>
+                <Text style={[styles.pillText, i === 2 && styles.pillTextAccent]}>{tag}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Feature Cards */}
+          <View style={styles.featureCards}>
+            {[
+              { emoji: '🛡️', title: 'Stay Hidden', desc: 'Your identity is never stored or revealed' },
+              { emoji: '🏛️', title: 'Your Campus', desc: 'Find your class and join the conversation' },
+              { emoji: '💬', title: 'Speak Freely', desc: 'No consequences. Just honest campus talk' },
+            ].map((f, i) => (
+              <View key={i} style={styles.featureRow}>
+                <View style={styles.featureIconBox}><Text style={styles.featureEmoji}>{f.emoji}</Text></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.featureTitle}>{f.title}</Text>
+                  <Text style={styles.featureDesc}>{f.desc}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+
+          {/* Consent */}
+          <TouchableOpacity
+            style={styles.consentRow}
+            onPress={() => setAgreed(!agreed)}
+            activeOpacity={0.7}
+          >
+            <Checkbox
+              style={styles.checkbox}
+              value={agreed}
+              onValueChange={setAgreed}
+              color={agreed ? '#6366F1' : undefined}
+            />
+            <Text style={styles.consentText}>
+              I agree to the{' '}
+              <Text style={styles.consentLink}>Community Guidelines</Text>
+              {' '}and will be respectful.
             </Text>
-          </View>
+          </TouchableOpacity>
 
-          <View style={styles.formSection}>
-            <TouchableOpacity 
-              onPress={() => setAgreed(!agreed)}
-              activeOpacity={0.7}
-              style={styles.consentRow}
-            >
-              <Checkbox
-                style={styles.checkbox}
-                value={agreed}
-                onValueChange={setAgreed}
-                color={agreed ? '#4F46E5' : '#E5E7EB'}
-              />
-              <Text style={styles.consentText}>
-                I agree to the <Text style={styles.linkText}>Community Guidelines</Text>. I will keep it clean and respectful.
-              </Text>
-            </TouchableOpacity>
+          {/* CTA */}
+          <TouchableOpacity
+            style={[styles.ctaBtn, !agreed && styles.ctaBtnDisabled]}
+            onPress={handleGuestSignIn}
+            disabled={loading || !agreed}
+            activeOpacity={0.9}
+          >
+            {loading ? (
+              <ActivityIndicator color="#FFF" />
+            ) : (
+              <>
+                <Text style={styles.ctaBtnText}>Enter Anonymously</Text>
+                <Text style={styles.ctaBtnArrow}>→</Text>
+              </>
+            )}
+          </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={[styles.primaryButton, !agreed && styles.buttonDisabled]} 
-              onPress={handleGuestSignIn}
-              disabled={loading}
-              activeOpacity={0.9}
-            >
-              {loading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.buttonText}>Enter Unfiltered Campus</Text>
-              )}
-            </TouchableOpacity>
-          </View>
         </View>
-        
+
         <View style={styles.footer}>
-          <Text style={styles.footerText}>SECURE PORTAL v3.0 • ENCRYPTED_TUNNEL</Text>
+          <Text style={styles.footerText}>SECURE • ENCRYPTED • ANONYMOUS</Text>
         </View>
       </SafeAreaView>
     </View>
@@ -95,68 +125,80 @@ export default function LoginScreen({ onLoginSuccess }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9FAFB' },
-  topOrb: {
-    position: 'absolute',
-    top: -height * 0.1,
-    right: -width * 0.2,
-    width: width,
-    height: width,
-    borderRadius: width / 2,
+  container: { flex: 1, backgroundColor: '#FAFAFA' },
+  safe: { flex: 1 },
+
+  // Decorative background orbs
+  orbTopRight: {
+    position: 'absolute', top: -80, right: -80,
+    width: 260, height: 260, borderRadius: 130,
     backgroundColor: '#EEF2FF',
-    opacity: 0.8,
   },
-  bottomOrb: {
-    position: 'absolute',
-    bottom: -height * 0.2,
-    left: -width * 0.3,
-    width: width * 1.5,
-    height: width * 1.5,
-    borderRadius: (width * 1.5) / 2,
-    backgroundColor: '#F5F3FF',
-    opacity: 0.6,
+  orbBottomLeft: {
+    position: 'absolute', bottom: -100, left: -60,
+    width: 300, height: 300, borderRadius: 150,
+    backgroundColor: '#FFF7ED',
   },
-  safeArea: { flex: 1 },
-  content: { flex: 1, paddingHorizontal: 32, justifyContent: 'center' },
-  
-  header: { marginBottom: 48 },
-  accentBadge: { 
-    backgroundColor: '#4F46E5', 
-    alignSelf: 'flex-start', 
-    paddingHorizontal: 10, 
-    paddingVertical: 4, 
-    borderRadius: 8,
-    marginBottom: 12
-  },
-  badgeText: { color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 1 },
-  title: { fontSize: 44, fontWeight: '900', color: '#111827', letterSpacing: -1.5 },
-  subtitle: { fontSize: 14, fontWeight: '600', color: '#6B7280', marginTop: 4, letterSpacing: 0.5 },
-  
-  heroSection: { marginBottom: 56 },
-  heroLine: { fontSize: 36, fontWeight: '800', color: '#111827', lineHeight: 42 },
-  heroDescription: { fontSize: 16, color: '#6B7280', lineHeight: 24, marginTop: 16, fontWeight: '500' },
 
-  formSection: { width: '100%' },
-  consentRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 32 },
-  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1, borderColor: '#D1D5DB', marginRight: 14, marginTop: 2 },
-  consentText: { flex: 1, fontSize: 14, color: '#4B5563', lineHeight: 22, fontWeight: '500' },
-  linkText: { color: '#4F46E5', fontWeight: '700' },
+  content: { flex: 1, paddingHorizontal: 28, paddingTop: 52, justifyContent: 'center' },
 
-  primaryButton: {
-    height: 64,
-    borderRadius: 16,
+  betaBadge: {
+    backgroundColor: '#6366F1', alignSelf: 'flex-start',
+    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5, marginBottom: 28,
+  },
+  betaText: { fontSize: 10, fontWeight: '900', color: '#FFF', letterSpacing: 2 },
+
+  logoWrap: {
+    width: 80, height: 80, borderRadius: 24,
+    backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center',
+    marginBottom: 16, borderWidth: 2, borderColor: '#C7D2FE',
+    shadowColor: '#6366F1', shadowOpacity: 0.15, shadowRadius: 12, elevation: 4,
+  },
+  logoEmoji: { fontSize: 38 },
+
+  appName: { fontSize: 44, fontWeight: '900', color: '#111827', letterSpacing: -1.5, marginBottom: 4 },
+  tagline: { fontSize: 15, fontWeight: '600', color: '#6B7280', marginBottom: 20, letterSpacing: 0.3 },
+
+  pillsRow: { flexDirection: 'row', gap: 8, marginBottom: 28 },
+  pill: {
+    backgroundColor: '#F1F3F5', borderRadius: 20,
+    paddingHorizontal: 14, paddingVertical: 6,
+    borderWidth: 1, borderColor: '#E5E7EB',
+  },
+  pillAccent: { backgroundColor: '#6366F1', borderColor: '#6366F1' },
+  pillText: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
+  pillTextAccent: { color: '#FFF' },
+
+  featureCards: {
+    backgroundColor: '#FFF', borderRadius: 20, padding: 20,
+    marginBottom: 24, borderWidth: 1, borderColor: '#F1F3F5',
+    shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10, elevation: 2,
+  },
+  featureRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  featureIconBox: {
+    width: 44, height: 44, borderRadius: 14,
+    backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center', marginRight: 14,
+  },
+  featureEmoji: { fontSize: 22 },
+  featureTitle: { fontSize: 14, fontWeight: '800', color: '#111827', marginBottom: 2 },
+  featureDesc: { fontSize: 12, color: '#9CA3AF', fontWeight: '500' },
+
+  consentRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 24 },
+  checkbox: { width: 22, height: 22, borderRadius: 6, marginRight: 12, marginTop: 2 },
+  consentText: { flex: 1, fontSize: 13, color: '#6B7280', lineHeight: 20, fontWeight: '500' },
+  consentLink: { color: '#6366F1', fontWeight: '800' },
+
+  ctaBtn: {
+    height: 62, borderRadius: 18,
     backgroundColor: '#111827',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#111827',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 10,
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+    shadowColor: '#111827', shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2, shadowRadius: 16, elevation: 8,
   },
-  buttonDisabled: { backgroundColor: '#E5E7EB', shadowOpacity: 0, elevation: 0 },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: -0.2 },
-  
-  footer: { paddingBottom: 24, alignItems: 'center' },
-  footerText: { color: '#9CA3AF', fontSize: 10, fontWeight: '700', letterSpacing: 1 }
+  ctaBtnDisabled: { backgroundColor: '#E5E7EB', shadowOpacity: 0, elevation: 0 },
+  ctaBtnText: { color: '#FFF', fontSize: 17, fontWeight: '900', marginRight: 8 },
+  ctaBtnArrow: { color: '#FFF', fontSize: 22, fontWeight: '900' },
+
+  footer: { paddingBottom: 28, alignItems: 'center' },
+  footerText: { fontSize: 10, color: '#D1D5DB', fontWeight: '700', letterSpacing: 2 },
 });

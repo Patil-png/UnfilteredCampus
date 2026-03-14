@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, FlatList, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActionSheetIOS, StatusBar, Modal, ScrollView, Animated, PanResponder, Dimensions } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import axios from 'axios';
 import * as Application from 'expo-application';
 import { supabase } from '../supabaseClient';
@@ -28,7 +29,8 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
   const [polls, setPolls] = useState([]);
   const [isCreatingPoll, setIsCreatingPoll] = useState(false);
   const [newPollQuestion, setNewPollQuestion] = useState('');
-  const [newPollOptions, setNewPollOptions] = useState(['', '']); 
+  const [newPollOptions, setNewPollOptions] = useState(['', '']);
+  const [replyingTo, setReplyingTo] = useState(null);
 
   // Bottom Sheet Animation
   const screenHeight = Dimensions.get('window').height;
@@ -81,39 +83,40 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
   useEffect(() => {
     initChat();
 
-    // Subscribe to new messages
+    // Subscribe to new messages — scoped to this channel only
+    const channelId = channel?.id;
     const subscription = supabase
-      .channel('public:messages')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
-        fetchMessages();
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, payload => {
-        fetchMessages();
-      })
+      .channel(`messages:channel:${channelId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'messages',
+        filter: channelId ? `channel_id=eq.${channelId}` : undefined,
+      }, () => fetchMessages())
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'messages',
+        filter: channelId ? `channel_id=eq.${channelId}` : undefined,
+      }, () => fetchMessages())
       .subscribe();
 
     // Subscribe to reactions
     const reactionSub = supabase
       .channel('public:message_reactions')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, payload => {
-        fetchMessages();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, () => fetchMessages())
       .subscribe();
 
     // Subscribe to polls
     const pollSub = supabase
       .channel('public:polls')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'polls' }, payload => {
-        fetchPolls();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'polls' }, () => fetchPolls())
       .subscribe();
 
     // Subscribe to poll votes
     const voteSub = supabase
       .channel('public:poll_votes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'poll_votes' }, payload => {
-        fetchPolls();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'poll_votes' }, () => fetchPolls())
       .subscribe();
 
     return () => {
@@ -122,7 +125,7 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
       supabase.removeChannel(pollSub);
       supabase.removeChannel(voteSub);
     };
-  }, []);
+  }, [channel?.id]);  // Re-subscribe when group changes
 
   const initChat = async () => {
     let id = await getStableDeviceId();
@@ -175,23 +178,15 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
   };
 
   const fetchMessages = async () => {
-    const { data, error } = await supabase
-      .from('messages')
-      .select(`
-        *,
-        profiles:sender_id (nickname),
-        message_reactions (emoji, mask_id)
-      `)
-      .eq('is_reported', false) // Optionally hide reported messages locally
     try {
       const { data, error } = await supabase
         .from('messages')
         .select('*, message_reactions(*)')
         .eq('channel_id', channel?.id)
         .order('created_at', { ascending: false });
-      
+
       if (error) throw error;
-      setMessages(data);
+      setMessages(data || []);
     } catch (error) {
       console.error('Fetch error:', error);
     }
@@ -217,9 +212,11 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
       const response = await axios.post(`${BACKEND_URL}/api/messages`, {
         userId: user.id,
         content: content.trim(),
-        channelId: channel?.id
+        channelId: channel?.id,
+        replyToId: replyingTo?.id || null
       });
       setContent('');
+      setReplyingTo(null);
       fetchMessages();
     } catch (error) {
       Alert.alert('Error', error.response?.data?.message || 'Failed to send message');
@@ -332,30 +329,29 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
 
-      {/* Header - Cyber Terminal Style */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <TouchableOpacity onPress={onBack} style={styles.backBtn}>
-            <Text style={styles.backIcon}>⬅️</Text>
-          </TouchableOpacity>
-          <View style={{ flex: 1, marginLeft: 10 }}>
-            <Text style={styles.headerTitle} numberOfLines={1}>{channel?.name || 'GLOBAL TERMINAL'}</Text>
-            <View style={styles.statusRow}>
-              <View style={styles.statusDot} />
-              <Text style={styles.statusText}>PROTOCOL_ACTIVE</Text>
+            <Text style={styles.headerBackIcon}>←</Text>
+            <View style={styles.headerAvatar}>
+              <Text style={styles.avatarEmoji}>🎓</Text>
             </View>
-          </View>
-          <TouchableOpacity style={styles.profileBtn} onPress={onOpenProfile}>
-            <Text style={styles.profileEmoji}>👤</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={styles.headerTitleContainer} onPress={onOpenProfile}>
+            <Text style={styles.headerTitleText} numberOfLines={1}>{channel?.name || 'Group Chat'}</Text>
+            <Text style={styles.headerSubtitleText}>online</Text>
+          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity style={styles.actionBtn}><Text style={styles.actionIcon}>🎥</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.actionBtn}><Text style={styles.actionIcon}>📞</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.actionBtn}><Text style={styles.actionIcon}>⋮</Text></TouchableOpacity>
+          </View>
         </View>
 
-        <View style={styles.headerBottom}>
-          <View style={styles.maskContainer}>
-            <Text style={styles.shieldIcon}>🛡️</Text>
-            <Text style={styles.maskLabel}>{myNickname}: <Text style={styles.maskValue}>{maskId ? maskId.substring(0, 8).toUpperCase() : 'SEARCHING...'}</Text></Text>
-          </View>
-          <Text style={styles.nodeCount}>NODES ESTABLISHED: {messages.length > 0 ? 4 : 1}</Text>
+        <View style={styles.headerBottomFixed}>
+          <Text style={styles.maskBadgeText}>
+            {myNickname} • <Text style={{ fontWeight: '900' }}>{maskId ? maskId.substring(0, 8).toUpperCase() : '...'}</Text>
+          </Text>
         </View>
       </View>
 
@@ -365,9 +361,9 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         <View style={{ flex: 1, backgroundColor: '#F8F9FA' }}>
-          <TouchableOpacity 
-            style={{ flex: 1 }} 
-            activeOpacity={1} 
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
             onPress={() => setSelectedMsgForReaction(null)}
             disabled={!selectedMsgForReaction}
           >
@@ -377,144 +373,242 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
               inverted
               contentContainerStyle={{ paddingVertical: 20 }}
               scrollEnabled={!selectedMsgForReaction}
-              renderItem={({ item }) => {
-              if (item.isPoll) {
-                const totalVotes = item.poll_votes?.length || 0;
-                const userVote = item.poll_votes?.find(v => v.mask_id === maskId);
-                const isExpired = item.expires_at && new Date(item.expires_at) < new Date();
+              ListEmptyComponent={() => (
+                <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 60, paddingHorizontal: 30 }}>
+                  <Text style={{ fontSize: 40, marginBottom: 14 }}>💬</Text>
+                  <Text style={{ fontSize: 18, fontWeight: '900', color: '#1A1A1A', marginBottom: 6, textAlign: 'center' }}>
+                    {channel?.name || 'Group'} is empty
+                  </Text>
+                  <Text style={{ fontSize: 13, color: '#ADB5BD', textAlign: 'center', lineHeight: 20 }}>
+                    Be the first to post in this group! All messages here are anonymous and scoped to this class only.
+                  </Text>
+                </View>
+              )}
+              renderItem={({ item, index }) => {
+                const isPoll = !!item.isPoll;
+                const nextMsg = index < messages.length - 1 ? messages[index + 1] : null;
+                const prevMsg = index > 0 ? messages[index - 1] : null;
 
-                return (
-                  <View style={styles.pollWrapper}>
-                    <View style={styles.pollCard}>
-                      <View style={styles.pollHeader}>
-                        <Text style={styles.pollBadge}>⚡ CAMPUS PULSE</Text>
-                        <Text style={styles.pollQuestion}>{item.question}</Text>
-                      </View>
-                      
-                      <View style={styles.pollOptions}>
-                        {item.options.map((option, index) => {
-                          const optionVotes = item.poll_votes?.filter(v => v.option_index === index).length || 0;
-                          const percentage = totalVotes > 0 ? Math.round((optionVotes / totalVotes) * 100) : 0;
-                          const isSelected = userVote?.option_index === index;
+                const isMe = item.sender_id === maskId;
 
-                          return (
-                            <TouchableOpacity 
-                              key={index} 
-                              style={[styles.optionBtn, isSelected && styles.optionSelected]}
-                              onPress={() => !userVote && !isExpired && castVote(item.id, index)}
-                              disabled={!!userVote || isExpired}
-                            >
-                              <View style={[styles.optionProgress, { width: `${percentage}%` }]} />
-                              <View style={styles.optionContent}>
-                                <Text style={[styles.optionText, isSelected && styles.optionTextSelected]}>{option}</Text>
-                                <Text style={styles.optionPercent}>{percentage}%</Text>
-                              </View>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
+                // In inverted list, Visually Above = Higher Index
+                // Visually Below = Lower Index
+                const isSameAsAbove = nextMsg && nextMsg.sender_id === item.sender_id;
+                const isSameDateAsAbove = nextMsg && new Date(nextMsg.created_at).toDateString() === new Date(item.created_at).toDateString();
+                const isFirstInGroup = !(isSameAsAbove && isSameDateAsAbove);
 
-                      <View style={styles.pollFooter}>
-                        <Text style={styles.pollInfo}>{totalVotes} VOTES • {isExpired ? 'CLOSED' : 'LIVE'}</Text>
+                const isSameDateAsBelow = prevMsg && new Date(prevMsg.created_at).toDateString() === new Date(item.created_at).toDateString();
+                const showDateHeader = !isSameAsAbove; // Simplification for now, will refine
+
+                if (item.isPoll) {
+                  const totalVotes = item.poll_votes?.length || 0;
+                  const userVote = item.poll_votes?.find(v => v.mask_id === maskId);
+                  const isExpired = item.expires_at && new Date(item.expires_at) < new Date();
+
+                  return (
+                    <View style={styles.pollWrapper}>
+                      <View style={styles.pollCard}>
+                        <View style={styles.pollHeader}>
+                          <Text style={styles.pollBadge}>⚡ CAMPUS PULSE</Text>
+                          <Text style={styles.pollQuestion}>{item.question}</Text>
+                        </View>
+
+                        <View style={styles.pollOptions}>
+                          {item.options.map((option, index) => {
+                            const optionVotes = item.poll_votes?.filter(v => v.option_index === index).length || 0;
+                            const percentage = totalVotes > 0 ? Math.round((optionVotes / totalVotes) * 100) : 0;
+                            const isSelected = userVote?.option_index === index;
+
+                            return (
+                              <TouchableOpacity
+                                key={index}
+                                style={[styles.optionBtn, isSelected && styles.optionSelected]}
+                                onPress={() => !userVote && !isExpired && castVote(item.id, index)}
+                                disabled={!!userVote || isExpired}
+                              >
+                                <View style={[styles.optionProgress, { width: `${percentage}%` }]} />
+                                <View style={styles.optionContent}>
+                                  <Text style={[styles.optionText, isSelected && styles.optionTextSelected]}>{option}</Text>
+                                  <Text style={styles.optionPercent}>{percentage}%</Text>
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+
                       </View>
                     </View>
+                  );
+                }
+
+                const nickname = item.profiles?.nickname || 'ANONYMOUS';
+                const timeStr = new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+
+                const formatDateHeader = (dateStr) => {
+                  const d = new Date(dateStr);
+                  const today = new Date();
+                  const yesterday = new Date();
+                  yesterday.setDate(today.getDate() - 1);
+
+                  if (d.toDateString() === today.toDateString()) return 'TODAY';
+                  if (d.toDateString() === yesterday.toDateString()) return 'YESTERDAY';
+                  return d.toLocaleDateString([], { day: '2-digit', month: 'long', year: 'numeric' }).toUpperCase();
+                };
+
+                const renderReplyAction = () => (
+                  <View style={{ justifyContent: 'center', alignItems: 'center', width: 60 }}>
+                    <Text style={{ fontSize: 24 }}>↩️</Text>
                   </View>
                 );
-              }
 
-              const isMe = item.sender_id === maskId;
-              const nickname = item.profiles?.nickname || 'ANONYMOUS';
-              const time = new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-
-              return (
-                <TouchableOpacity
-                  onLongPress={(e) => showReactionPicker(item.id, isMe, e)}
-                  activeOpacity={0.9}
-                  style={[
-                    styles.messageWrapper, 
-                    isMe ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' }
-                  ]}
-                >
-                  <View style={[styles.messageRow, isMe && { flexDirection: 'row-reverse' }]}>
-                    {/* Avatar Icon */}
-                    <View style={styles.avatarSpace}>
-                      {isMe ? (
-                        <View style={styles.selfIcon}>
-                          <Text style={styles.iconEmoji}>📚</Text>
+                return (
+                  <View key={item.id}>
+                    {showDateHeader && (
+                      <View style={styles.dateHeader}>
+                        <View style={styles.datePill}>
+                          <Text style={styles.dateText}>{formatDateHeader(item.created_at)}</Text>
                         </View>
-                      ) : (
-                        <View style={styles.nodeIcon}>
-                          <Text style={styles.iconEmoji}>🤖</Text>
-                        </View>
-                      )}
-                    </View>
-
-                    {/* Message Content */}
-                    <View style={[
-                      styles.bubbleContainer, 
-                      isMe ? { marginRight: 15 } : { marginLeft: 15 },
-                      item.message_reactions?.length > 0 && { marginBottom: 12 }
-                    ]}>
-                      <Text style={[styles.bubbleHeader, isMe ? styles.selfHeader : styles.nodeHeader]}>
-                        {isMe ? `${nickname} (YOU) • ${time}` : `${nickname} • ${time}`}
-                      </Text>
-
-                      <View style={[
-                        styles.bubble, 
-                        isMe ? styles.selfBubble : styles.nodeBubble,
-                        item.message_reactions?.length > 0 && { paddingBottom: 18 }
-                      ]}>
-                        {isMe && <View style={styles.scanlineOverlay} />}
-                        <Text style={[styles.messageText, isMe ? styles.selfText : styles.nodeText]}>
-                          {item.content}
-                        </Text>
                       </View>
+                    )}
+                    <Swipeable
+                      renderLeftActions={renderReplyAction}
+                      onSwipeableOpen={() => setReplyingTo(item)}
+                      friction={2}
+                    >
+                      <TouchableOpacity
+                        onLongPress={(e) => showReactionPicker(item.id, isMe, e)}
+                        activeOpacity={0.9}
+                        style={[
+                          styles.messageWrapper,
+                          isMe ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' },
+                          !isFirstInGroup && { marginTop: -2 }
+                        ]}
+                      >
+                        <View style={[styles.messageRow, isMe && { flexDirection: 'row-reverse' }]}>
+                          <View style={[
+                            styles.bubbleContainer,
+                            item.message_reactions?.length > 0 && { marginBottom: 12 }
+                          ]}>
+                            {!isMe && isFirstInGroup && (
+                              <Text style={styles.bubbleHeader}>{nickname}</Text>
+                            )}
 
-                      {/* Reactions Display */}
-                      {item.message_reactions && item.message_reactions.length > 0 && (
-                        <View style={[styles.reactionContainer, isMe ? { right: 0 } : { left: 0 }]}>
-                          {(() => {
-                            const uniqueEmojis = [...new Set(item.message_reactions.map(r => r.emoji))];
-                            return uniqueEmojis.map(emoji => {
-                              const count = item.message_reactions.filter(r => r.emoji === emoji).length;
-                              const userReacted = item.message_reactions.some(r => r.emoji === emoji && r.mask_id === maskId);
-                              return (
-                                <TouchableOpacity
-                                  key={emoji}
-                                  style={[styles.reactionBadge, userReacted && styles.userReactionActive]}
-                                  onPress={() => toggleReaction(item.id, emoji)}
-                                >
-                                  <Text style={styles.reactionText}>{emoji}{count > 1 ? ` ${count}` : ''}</Text>
-                                </TouchableOpacity>
-                              );
-                            });
-                          })()}
+                            <View style={[
+                              styles.bubble,
+                              isMe ? styles.selfBubble : styles.nodeBubble,
+                              !isFirstInGroup && (isMe ? { borderTopRightRadius: 12 } : { borderTopLeftRadius: 12 }),
+                              item.message_reactions?.length > 0 && { paddingBottom: 18 }
+                            ]}>
+                              {isFirstInGroup && (
+                                <View style={[
+                                  styles.tailContainer,
+                                  isMe ? styles.selfTail : styles.nodeTail
+                                ]} />
+                              )}
+
+                              {item.reply_to_id && (() => {
+                                const repliedMsg = messages.find(m => m.id === item.reply_to_id);
+                                if (!repliedMsg) return null;
+                                return (
+                                  <View style={styles.quoteBlock}>
+                                    <Text style={styles.quoteNickname} numberOfLines={1}>
+                                      {repliedMsg.sender_id === maskId ? '(YOU)' : 'ANONYMOUS'}
+                                    </Text>
+                                    <Text style={styles.quoteText} numberOfLines={2}>
+                                      {repliedMsg.content}
+                                    </Text>
+                                  </View>
+                                );
+                              })()}
+
+                              <Text style={[styles.messageText, isMe ? styles.selfText : styles.nodeText]}>
+                                {item.content}
+                              </Text>
+
+                              <View style={styles.timeContainer}>
+                                <Text style={styles.inlineTime}>{timeStr}</Text>
+                                {isMe && <Text style={styles.tickIcon}>✓</Text>}
+                              </View>
+                            </View>
+
+                            {/* Reactions Display */}
+                            {item.message_reactions && item.message_reactions.length > 0 && (
+                              <View style={[styles.reactionContainer, isMe ? { right: 0 } : { left: 0 }]}>
+                                {(() => {
+                                  const uniqueEmojis = [...new Set(item.message_reactions.map(r => r.emoji))];
+                                  return uniqueEmojis.map(emoji => {
+                                    const count = item.message_reactions.filter(r => r.emoji === emoji).length;
+                                    const userReacted = item.message_reactions.some(r => r.emoji === emoji && r.mask_id === maskId);
+                                    return (
+                                      <TouchableOpacity
+                                        key={emoji}
+                                        style={[styles.reactionBadge, userReacted && styles.userReactionActive]}
+                                        onPress={() => toggleReaction(item.id, emoji)}
+                                      >
+                                        <Text style={styles.reactionText}>{emoji}{count > 1 ? ` ${count}` : ''}</Text>
+                                      </TouchableOpacity>
+                                    );
+                                  });
+                                })()}
+                              </View>
+                            )}
+                          </View>
                         </View>
-                      )}
-                    </View>
+                      </TouchableOpacity>
+                    </Swipeable>
                   </View>
-
-                </TouchableOpacity>
-              );
-            }}
-          />
-        </TouchableOpacity>
+                );
+              }}
+            />
+          </TouchableOpacity>
 
           <View style={styles.inputArea}>
-            <View style={styles.terminalInputContainer}>
-              <Text style={styles.promptText}>&gt;</Text>
-              <TextInput
-                style={styles.terminalInput}
-                placeholder="TRANSMIT_DATA_PACKET..."
-                placeholderTextColor="#1A3A1A"
-                value={content}
-                onChangeText={setContent}
-                multiline={false}
-                selectionColor="#00FF41"
-              />
-              <View style={styles.cursorBlock} />
-              <TouchableOpacity style={styles.terminalSendBtn} onPress={sendMessage}>
-                <Text style={styles.sendIcon}>🚀</Text>
+            {replyingTo && (
+              <View style={styles.replyPreview}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.replyPreviewHeader}>
+                    {replyingTo.sender_id === maskId ? 'You' : 'Anonymous'}
+                  </Text>
+                  <Text style={styles.replyPreviewText} numberOfLines={1}>{replyingTo.content}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setReplyingTo(null)} style={{ padding: 5 }}>
+                  <Text style={{ fontSize: 18, color: '#A0A0A0' }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <View style={styles.inputContainerRow}>
+              <View style={styles.inputWrapper}>
+                <TouchableOpacity style={{ padding: 5 }}>
+                  <Text style={{ fontSize: 22 }}>😊</Text>
+                </TouchableOpacity>
+                <TextInput
+                  style={styles.chatInput}
+                  placeholder="Type a message"
+                  placeholderTextColor="#9CA3AF"
+                  value={content}
+                  onChangeText={setContent}
+                  multiline={true}
+                  maxLength={500}
+                />
+                <TouchableOpacity style={{ padding: 5 }}>
+                  <Text style={{ fontSize: 20, color: '#9CA3AF' }}>📎</Text>
+                </TouchableOpacity>
+                {!content.trim() && (
+                  <TouchableOpacity style={{ padding: 5 }}>
+                    <Text style={{ fontSize: 20, color: '#9CA3AF' }}>📷</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <TouchableOpacity
+                style={styles.sendBtn}
+                onPress={sendMessage}
+                disabled={!content.trim()}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.sendIcon}>
+                  {content.trim() ? '➤' : '🎤'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -523,16 +617,16 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
 
       {/* Floating Reaction Bar Modal (Absolute Top-Level Elevation) */}
       <Modal visible={!!selectedMsgForReaction && !isFullPickerOpen} transparent animationType="fade">
-        <TouchableOpacity 
-          style={styles.pickerOverlay} 
-          activeOpacity={1} 
+        <TouchableOpacity
+          style={styles.pickerOverlay}
+          activeOpacity={1}
           onLongPress={() => setSelectedMsgForReaction(null)}
           onPress={() => setSelectedMsgForReaction(null)}
         >
           <View style={[
             styles.floatingPicker,
-            { 
-              top: Math.max(100, Math.min(pickerPosition.y, screenHeight - 200)), 
+            {
+              top: Math.max(100, Math.min(pickerPosition.y, screenHeight - 200)),
               alignSelf: pickerPosition.isMe ? 'flex-end' : 'flex-start',
               marginHorizontal: 30
             }
@@ -559,12 +653,12 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
       {/* Full Emoji Picker Modal (WhatsApp Style Sheet) */}
       <Modal visible={isFullPickerOpen} transparent animationType="none">
         <View style={styles.modalOverlay}>
-          <TouchableOpacity 
-            style={styles.modalCloseArea} 
-            activeOpacity={1} 
+          <TouchableOpacity
+            style={styles.modalCloseArea}
+            activeOpacity={1}
             onPress={closeSheet}
           />
-          <Animated.View 
+          <Animated.View
             style={[
               styles.fullPickerSheet,
               { transform: [{ translateY: sheetY }] }
@@ -575,9 +669,9 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
               <View style={styles.dragHandle} />
               <Text style={styles.sheetTitle}>SELECT REACTION</Text>
             </View>
-            
-            <ScrollView 
-              style={styles.emojiScroll} 
+
+            <ScrollView
+              style={styles.emojiScroll}
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 40 }}
               onScroll={(e) => {
@@ -589,8 +683,8 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
                   <Text style={styles.sectionTitle}>{section.title}</Text>
                   <View style={styles.emojiGrid}>
                     {section.emojis.map((emoji) => (
-                      <TouchableOpacity 
-                        key={emoji} 
+                      <TouchableOpacity
+                        key={emoji}
                         onPress={() => toggleReaction(selectedMsgForReaction, emoji)}
                         style={styles.gridEmojiBtn}
                       >
@@ -608,12 +702,12 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
       {/* CREATE POLL MODAL (Lumina-Shadow Style) */}
       <Modal visible={isCreatingPoll} transparent animationType="slide">
         <View style={styles.modalOverlay}>
-          <TouchableOpacity 
-            style={styles.modalCloseArea} 
-            activeOpacity={1} 
+          <TouchableOpacity
+            style={styles.modalCloseArea}
+            activeOpacity={1}
             onPress={() => setIsCreatingPoll(false)}
           />
-          <KeyboardAvoidingView 
+          <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={styles.createPollSheet}
           >
@@ -669,193 +763,171 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8F9FA' },
+  container: { flex: 1, backgroundColor: '#E5DDD5' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#E5DDD5' },
+
+  // Header Styles
   header: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    paddingTop: 10,
-    paddingBottom: 20,
-    paddingHorizontal: 25,
-    borderBottomWidth: 1.5,
-    borderColor: '#E9ECEF',
+    backgroundColor: '#075E54',
+    paddingTop: Platform.OS === 'ios' ? 50 : 25,
+    paddingBottom: 10,
+    paddingHorizontal: 10,
+    elevation: 5,
     zIndex: 100,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 8
   },
-  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
-  headerTitle: { fontSize: 24, fontWeight: '900', color: '#1A1A1A', letterSpacing: 1 },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(40, 167, 69, 0.1)',
-    borderWidth: 1,
-    borderColor: '#28A745',
+  headerTop: { flexDirection: 'row', alignItems: 'center' },
+  backBtn: { flexDirection: 'row', alignItems: 'center', padding: 5 },
+  headerBackIcon: { color: '#FFFFFF', fontSize: 24, marginRight: 5 },
+  headerAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center' },
+  avatarEmoji: { fontSize: 18 },
+  headerTitleContainer: { flex: 1, marginLeft: 10 },
+  headerTitleText: { color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
+  headerSubtitleText: { color: '#FFFFFF', fontSize: 12, opacity: 0.8 },
+  headerActions: { flexDirection: 'row', alignItems: 'center' },
+  actionBtn: { padding: 10 },
+  actionIcon: { fontSize: 18, color: '#FFFFFF' },
+
+  headerBottomFixed: {
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 25
-  },
-  statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#28A745', marginRight: 8 },
-  statusText: { color: '#28A745', fontSize: 10, fontWeight: '900', letterSpacing: 2 },
-
-  headerBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  maskContainer: { flexDirection: 'row', alignItems: 'center' },
-  shieldIcon: { fontSize: 16, marginRight: 10 },
-  maskLabel: { color: '#6C757D', fontSize: 13, fontWeight: '800' },
-  maskValue: { color: '#6366F1', fontWeight: '900', letterSpacing: 1 },
-  nodeCount: { color: '#ADB5BD', fontSize: 10, fontWeight: '900', letterSpacing: 1 },
-
-  messageWrapper: { width: '100%', paddingHorizontal: 20, marginVertical: 8 },
-  messageRow: { flexDirection: 'row', alignItems: 'flex-end', maxWidth: '88%' },
-  avatarSpace: { width: 40, height: 40, marginRight: 10 },
-  nodeIcon: { 
-    width: 36, height: 36, borderRadius: 18, 
-    backgroundColor: '#E9ECEF', 
-    justifyContent: 'center', alignItems: 'center', 
-    borderWidth: 1.5, borderColor: '#DEE2E6'
-  },
-  selfIcon: { 
-    width: 36, height: 36, borderRadius: 18, 
-    backgroundColor: '#6366F1', 
-    justifyContent: 'center', alignItems: 'center',
-    shadowColor: '#6366F1', shadowOpacity: 0.3, shadowRadius: 10
-  },
-  iconEmoji: { fontSize: 16 },
-
-  bubbleContainer: { maxWidth: '85%' },
-  bubbleHeader: {
-    fontSize: 11,
-    fontWeight: '800',
-    marginBottom: 6,
-    color: '#ADB5BD',
-    marginLeft: 6
-  },
-  selfHeader: { textAlign: 'right', marginRight: 6 },
-
-  bubble: { padding: 15, borderRadius: 25, minWidth: 50 },
-  nodeBubble: {
-    backgroundColor: '#FFFFFF',
-    borderBottomLeftRadius: 5,
+    paddingVertical: 5,
+    backgroundColor: 'rgba(0,0,0,0.1)',
+    marginTop: 8,
+    borderRadius: 8,
     alignSelf: 'flex-start',
-    borderWidth: 1.5,
-    borderColor: '#E9ECEF',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    elevation: 2
+    marginLeft: 55,
   },
-  selfBubble: {
-    backgroundColor: '#6366F1',
-    borderBottomRightRadius: 5,
-    alignSelf: 'flex-end',
-    shadowColor: '#6366F1',
-    shadowOpacity: 0.2,
-    shadowRadius: 15,
-    elevation: 5
+  maskBadgeText: { color: '#FFFFFF', fontSize: 10, opacity: 0.9, fontWeight: '600' },
+
+  // Date Header
+  dateHeader: { alignItems: 'center', marginVertical: 12 },
+  datePill: { backgroundColor: '#D9D9D9', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 8 },
+  dateText: { fontSize: 11, color: '#5C5C5C', fontWeight: '800' },
+
+  // Message Styles
+  messageWrapper: { width: '100%', paddingHorizontal: 15, marginVertical: 1 },
+  messageRow: { flexDirection: 'row', alignItems: 'flex-end', maxWidth: '85%' },
+  bubbleContainer: { position: 'relative' },
+  bubbleHeader: { color: '#075E54', fontSize: 12, fontWeight: '700', marginLeft: 8, marginBottom: 2 },
+
+  bubble: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    minWidth: 70,
   },
+  nodeBubble: { backgroundColor: '#FFFFFF', elevation: 1 },
+  selfBubble: { backgroundColor: '#DCF8C6', elevation: 1 },
+
+  // Tail Implementation
+  tailContainer: { position: 'absolute', top: 0, width: 10, height: 10 },
+  nodeTail: { left: -8, borderTopWidth: 10, borderTopColor: '#FFFFFF', borderLeftWidth: 10, borderLeftColor: 'transparent' },
+  selfTail: { right: -8, borderTopWidth: 10, borderTopColor: '#DCF8C6', borderRightWidth: 10, borderRightColor: 'transparent' },
+
   scanlineOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.02)',
-    borderRadius: 25,
+    borderRadius: 8,
     opacity: 0.05,
   },
 
   messageText: {
     fontSize: 16,
     lineHeight: 22,
-    fontWeight: '600'
+    color: '#303030',
+    fontWeight: '400'
   },
-  nodeText: { color: '#212529' },
-  selfText: { color: '#FFFFFF' },
+  nodeText: { color: '#303030' },
+  selfText: { color: '#303030' },
 
-  inputArea: {
-    padding: 15,
-    backgroundColor: '#FFFFFF',
-    paddingBottom: Platform.OS === 'ios' ? 40 : 20,
-    borderTopWidth: 1.5,
-    borderTopColor: '#E9ECEF'
-  },
-  terminalInputContainer: {
+  timeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8F9FA',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 35,
-    borderWidth: 1.5,
-    borderColor: '#DEE2E6'
+    alignSelf: 'flex-end',
+    marginTop: 2,
+    minWidth: 40,
+    justifyContent: 'flex-end',
   },
-  promptText: { color: '#ADB5BD', fontSize: 20, fontWeight: '900', marginRight: 12 },
-  terminalInput: {
+  inlineTime: {
+    fontSize: 10,
+    color: '#8C8C8C',
+    marginLeft: 10,
+  },
+  tickIcon: {
+    fontSize: 12,
+    color: '#8C8C8C',
+    marginLeft: 4,
+  },
+
+  inputArea: { padding: 8, backgroundColor: 'transparent' },
+  inputContainerRow: { flexDirection: 'row', alignItems: 'flex-end' },
+  inputWrapper: {
     flex: 1,
-    color: '#212529',
-    fontSize: 16,
-    fontWeight: '500'
-  },
-  cursorBlock: { width: 4, height: 22, backgroundColor: '#6366F1', opacity: 0.3, marginHorizontal: 8 },
-  terminalSendBtn: {
-    backgroundColor: '#6366F1',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 15,
-    shadowColor: '#6366F1',
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 8
-  },
-  sendIcon: { fontSize: 16 },
-  profileBtn: {
-    marginLeft: 15,
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    flexDirection: 'row',
     backgroundColor: '#FFFFFF',
+    borderRadius: 25,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    minHeight: 48,
+    alignItems: 'center',
+    marginRight: 8,
+    elevation: 2,
+  },
+  chatInput: { flex: 1, fontSize: 16, color: '#000', maxHeight: 120 },
+  sendBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#075E54',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#E9ECEF',
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 5
+    elevation: 3,
   },
-  profileEmoji: { fontSize: 16 },
-  reactionContainer: { 
-    flexDirection: 'row', 
+  sendIcon: { fontSize: 20, color: '#FFFFFF' },
+  profileBtn: {
+    marginLeft: 'auto',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  profileEmoji: { fontSize: 14, color: '#FFFFFF' },
+  backBtn: {
+    padding: 5,
+  },
+  backIcon: {
+    fontSize: 22,
+    color: '#FFFFFF',
+    fontWeight: '300'
+  },
+  reactionContainer: {
+    flexDirection: 'row',
     flexWrap: 'wrap',
     position: 'absolute',
-    bottom: -10,
+    bottom: -12,
     gap: 4,
     zIndex: 5,
-    maxWidth: '100%'
   },
-  reactionBadge: { 
-    backgroundColor: '#FFFFFF', 
-    paddingHorizontal: 8, 
-    paddingVertical: 3, 
+  reactionBadge: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: 15,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: '#E9ECEF',
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3
+    elevation: 2
   },
   userReactionActive: {
-    borderColor: '#6366F1',
-    backgroundColor: 'rgba(99, 102, 241, 0.1)',
-    shadowColor: '#6366F1',
-    shadowOpacity: 0.2,
-    shadowRadius: 8
+    borderColor: '#075E54',
+    backgroundColor: '#E7FFDB',
   },
   reactionText: {
-    color: '#212529',
+    color: '#303030',
     fontSize: 10,
-    fontWeight: '800'
+    fontWeight: '700'
   },
   floatingPicker: {
     position: 'absolute',
@@ -864,77 +936,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     paddingVertical: 12,
     borderRadius: 40,
-    borderWidth: 1.5,
-    borderColor: '#6366F1',
     zIndex: 9999,
-    shadowColor: '#6366F1',
+    shadowColor: '#000',
     shadowOpacity: 0.2,
-    shadowRadius: 20,
+    shadowRadius: 10,
     elevation: 10,
   },
-  pickerEmojiBtn: {
-    paddingHorizontal: 8,
-  },
-  pickerEmoji: {
-    fontSize: 22,
-  },
+  pickerEmojiBtn: { paddingHorizontal: 8 },
+  pickerEmoji: { fontSize: 24 },
   plusBtn: {
-    paddingLeft: 4,
+    paddingLeft: 8,
+    marginLeft: 8,
     borderLeftWidth: 1,
-    borderLeftColor: '#444',
+    borderLeftColor: '#F0F0F0',
   },
-  plusIcon: {
-    fontSize: 18,
-    color: '#999',
-    fontWeight: '300'
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)', 
-    justifyContent: 'flex-end',
-  },
-  pickerOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.6)', 
-    justifyContent: 'flex-start',
-  },
+  plusIcon: { fontSize: 20, color: '#999' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  pickerOverlay: { flex: 1, backgroundColor: 'transparent', justifyContent: 'flex-start' },
   modalCloseArea: {
     flex: 1,
   },
   fullPickerSheet: {
-    backgroundColor: '#F8F9FA',
+    backgroundColor: '#FFFFFF',
     width: '100%',
     height: '75%',
-    borderTopLeftRadius: 40,
-    borderTopRightRadius: 40,
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
     padding: 25,
-    borderWidth: 1.5,
-    borderColor: '#DEE2E6',
-    borderBottomWidth: 0,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 30,
-    elevation: 20
   },
-  sheetHeader: {
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  dragHandle: {
-    width: 60,
-    height: 5,
-    backgroundColor: '#DEE2E6',
-    borderRadius: 3,
-    marginBottom: 20,
-  },
-  sheetTitle: {
-    color: '#6366F1', // Primary brand color
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 4,
-    textAlign: 'center',
-    textTransform: 'uppercase'
-  },
+  sheetHeader: { alignItems: 'center', marginBottom: 20 },
+  dragHandle: { width: 40, height: 4, backgroundColor: '#E9ECEF', borderRadius: 2, marginBottom: 15 },
+  sheetTitle: { color: '#075E54', fontSize: 14, fontWeight: '800', textAlign: 'center' },
   emojiScroll: {
     flex: 1,
   },
@@ -949,140 +981,53 @@ const styles = StyleSheet.create({
     marginLeft: 5,
     letterSpacing: 1
   },
-  emojiGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  gridEmojiBtn: {
-    width: '15%',
-    aspectRatio: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  gridEmoji: {
-    fontSize: 26
-  },
+  emojiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  gridEmojiBtn: { width: '15%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center' },
+  gridEmoji: { fontSize: 28 },
   // Poll Styles
-  pollWrapper: {
-    paddingHorizontal: 20,
-    marginVertical: 15,
-  },
+  pollWrapper: { paddingHorizontal: 15, marginVertical: 10 },
   pollCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 25,
-    padding: 20,
-    borderWidth: 1.5,
-    borderColor: '#E9ECEF',
-    shadowColor: '#6366F1',
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    elevation: 8,
+    borderRadius: 15,
+    padding: 15,
+    borderWidth: 0,
+    elevation: 2
   },
   pollHeader: {
     marginBottom: 20,
   },
-  pollBadge: {
-    color: '#6366F1',
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 2,
-    marginBottom: 10,
-  },
-  pollQuestion: {
-    color: '#1A1A1A',
-    fontSize: 18,
-    fontWeight: '800',
-    lineHeight: 24,
-  },
+  pollBadge: { color: '#075E54', fontSize: 10, fontWeight: '800', marginBottom: 8 },
+  pollQuestion: { color: '#303030', fontSize: 16, fontWeight: '700' },
   pollOptions: {
     gap: 12,
   },
   optionBtn: {
-    height: 50,
-    borderRadius: 15,
+    height: 45,
+    borderRadius: 10,
     backgroundColor: '#F8F9FA',
-    borderWidth: 1.5,
-    borderColor: '#E9ECEF',
+    marginTop: 10,
     overflow: 'hidden',
     justifyContent: 'center',
   },
-  optionSelected: {
-    borderColor: '#6366F1',
-    backgroundColor: 'rgba(99, 102, 241, 0.05)',
-  },
-  optionProgress: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(99, 102, 241, 0.1)',
-  },
-  optionContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 15,
-    zIndex: 1,
-  },
-  optionText: {
-    color: '#495057',
-    fontSize: 14,
-    fontWeight: '700',
-  },
+  optionSelected: { backgroundColor: '#E7FFDB', borderColor: '#075E54', borderWidth: 1 },
+  optionProgress: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: 'rgba(37, 211, 102, 0.1)' },
+  optionContent: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12 },
+  optionText: { color: '#303030', fontSize: 14, fontWeight: '600' },
   optionTextSelected: {
     color: '#6366F1',
   },
-  optionPercent: {
-    color: '#ADB5BD',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  pollFooter: {
-    marginTop: 15,
-    paddingTop: 15,
-    borderTopWidth: 1,
-    borderTopColor: '#F8F9FA',
-    alignItems: 'center',
-  },
-  pollInfo: {
-    color: '#ADB5BD',
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
+  optionPercent: { color: '#8C8C8C', fontSize: 12 },
+  pollFooter: { marginTop: 10, alignItems: 'center' },
+  pollInfo: { color: '#8C8C8C', fontSize: 10, fontWeight: '700' },
   // Create Poll Styles
-  createPollSheet: {
-    backgroundColor: '#FFFFFF',
-    width: '100%',
-    maxHeight: '85%',
-    borderTopLeftRadius: 40,
-    borderTopRightRadius: 40,
-    padding: 25,
-    borderWidth: 1.5,
-    borderColor: '#E9ECEF',
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 30,
-    elevation: 20
-  },
+  createPollSheet: { backgroundColor: '#FFFFFF', width: '100%', maxHeight: '85%', borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25 },
   inputLabel: {
     color: '#6366F1',
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 2,
   },
-  pollInput: {
-    backgroundColor: '#F8F9FA',
-    borderRadius: 15,
-    padding: 15,
-    marginTop: 10,
-    color: '#1A1A1A',
-    fontSize: 15,
-    fontWeight: '600',
-    borderWidth: 1.5,
-    borderColor: '#E9ECEF',
-  },
+  pollInput: { backgroundColor: '#F8F9FA', borderRadius: 10, padding: 15, marginTop: 10, fontSize: 15 },
   optionInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1108,24 +1053,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '900',
   },
-  broadcastBtn: {
-    backgroundColor: '#6366F1',
-    borderRadius: 20,
-    padding: 18,
-    marginTop: 30,
-    alignItems: 'center',
-    shadowColor: '#6366F1',
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 5,
-    marginBottom: 30,
-  },
-  broadcastBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '900',
-    letterSpacing: 2,
-  },
+  broadcastBtn: { backgroundColor: '#075E54', borderRadius: 25, padding: 15, marginTop: 25, alignItems: 'center' },
+  broadcastBtnText: { color: '#FFFFFF', fontWeight: '800' },
   // Back button styles
   backBtn: {
     marginRight: 15,
@@ -1133,5 +1062,48 @@ const styles = StyleSheet.create({
   },
   backIcon: {
     fontSize: 20,
+  },
+  // Swipe & Reply Styles
+  quoteBlock: {
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    borderLeftWidth: 3,
+    borderLeftColor: '#6366F1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  quoteNickname: {
+    color: '#6366F1',
+    fontSize: 11,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  quoteText: {
+    color: '#495057',
+    fontSize: 12,
+  },
+  replyPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    padding: 12,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderLeftWidth: 4,
+    borderLeftColor: '#6366F1',
+    marginHorizontal: 15,
+    marginBottom: -15, // tucks under the input container
+    zIndex: 0,
+  },
+  replyPreviewHeader: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#6366F1',
+    marginBottom: 2,
+  },
+  replyPreviewText: {
+    fontSize: 13,
+    color: '#6B7280',
   }
 });

@@ -5,6 +5,7 @@ import AdminDashboard from './screens/AdminDashboard';
 import NodeArchitect from './screens/NodeArchitect';
 import ModerationHUD from './screens/ModerationHUD';
 import CategoryManager from './screens/CategoryManager';
+import CollegeManager from './screens/CollegeManager';
 
 const Stack = createNativeStackNavigator();
 
@@ -22,6 +23,7 @@ export default function App() {
         <Stack.Screen name="NodeArchitect" component={NodeArchitect} />
         <Stack.Screen name="ModerationHUD" component={ModerationHUD} />
         <Stack.Screen name="CategoryManager" component={CategoryManager} />
+        <Stack.Screen name="CollegeManager" component={CollegeManager} />
       </Stack.Navigator>
     </NavigationContainer>
   );

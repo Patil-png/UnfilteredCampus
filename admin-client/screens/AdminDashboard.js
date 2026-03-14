@@ -62,6 +62,17 @@ export default function AdminDashboard({ navigation }) {
 
         <TouchableOpacity 
           style={styles.mainBtn}
+          onPress={() => navigation.navigate('CollegeManager')}
+        >
+          <View style={[styles.btnIconBox, { backgroundColor: '#FFFBEB' }]}><Text style={styles.btnEmoji}>🏛️</Text></View>
+          <View>
+            <Text style={styles.btnTitle}>Campus Orchestrator</Text>
+            <Text style={styles.btnDesc}>Manage top-level colleges</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={styles.mainBtn}
           onPress={() => navigation.navigate('NodeArchitect')}
         >
           <View style={styles.btnIconBox}><Text style={styles.btnEmoji}>🏗️</Text></View>

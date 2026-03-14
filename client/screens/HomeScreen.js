@@ -1,365 +1,317 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, StatusBar, Dimensions, Image, Alert } from 'react-native';
-import axios from 'axios';
+import {
+  View, Text, TouchableOpacity, StyleSheet, ScrollView,
+  StatusBar, Dimensions, ActivityIndicator
+} from 'react-native';
 import { supabase } from '../supabaseClient';
-import * as Application from 'expo-application';
-import Constants from 'expo-constants';
-import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const BACKEND_URL = 'http://192.168.29.243:5000';
+const SELECTED_GROUP_KEY = '@unfiltered_selected_group';
 
-const CATEGORIES_FALLBACK = [
-  { id: '1', name: '🔥 HOT TOPICS', icon: '⚡' },
-  { id: '2', name: '🌍 GLOBAL CHAT', icon: '🛡️' },
-];
+const { width } = Dimensions.get('window');
 
 export default function HomeScreen({ user, onJoinChat, onOpenProfile }) {
-  const [hotTopics, setHotTopics] = useState([]);
-  const [activePolls, setActivePolls] = useState([]);
+  const [colleges, setColleges] = useState([]);
   const [categories, setCategories] = useState([]);
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [userGroup, setUserGroup] = useState(null);
 
   useEffect(() => {
-    fetchHubData();
-    
-    const pollSub = supabase
-      .channel('public:polls:hub')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'polls' }, () => fetchHubData())
+    fetchHierarchy();
+    const channelSub = supabase
+      .channel('public:channels:hub')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'channels' }, () => fetchHierarchy())
       .subscribe();
+    return () => supabase.removeChannel(channelSub);
+  }, []);
 
-    // Track activity (last_seen) for the current user
-    const updateLastSeen = async () => {
-      try {
-        const id = await getStableDeviceId();
-        const maskId = generateAnonymousId(id);
-        const { error } = await supabase
-          .from('profiles')
-          .update({ last_seen: new Date().toISOString() })
-          .eq('mask_id', maskId);
-        if (error) console.error('[HEARTBEAT] Error:', error);
-      } catch (err) {
-        console.error('[HEARTBEAT] Activity error:', err);
-      }
-    };
-
-    const getStableDeviceId = async () => {
-      let id = null;
-      try {
-        if (Platform.OS === 'android') id = Application.androidId;
-        if (Platform.OS === 'ios') id = await Application.getIosIdForVendorAsync();
-      } catch (e) {
-        console.warn('[HUB] Native ID fetch failed:', e);
-      }
-      
-      if (!id) {
-        id = await AsyncStorage.getItem('fallback_device_id');
-        if (!id) {
-          id = 'DEV_' + Math.random().toString(36).substring(2, 15).toUpperCase();
-          await AsyncStorage.setItem('fallback_device_id', id);
-        }
-      }
-      return id;
-    };
-
-    const generateAnonymousId = (id) => {
-      const safeId = String(id || 'ANONYMOUS_NODE');
-      let hash = 0;
-      for (let i = 0; i < safeId.length; i++) {
-        const char = safeId.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash = hash & hash;
-      }
-      return 'NODE_' + Math.abs(hash).toString(16).toUpperCase();
-    };
-
-    updateLastSeen();
-    const interval = setInterval(updateLastSeen, 45000); // 45s heartbeat
-
-    return () => {
-      supabase.removeChannel(pollSub);
-      clearInterval(interval);
-    };
-  }, [user?.id]);
-
-  const fetchHubData = async () => {
+  const fetchHierarchy = async () => {
     try {
-      // 1. Fetch Polls + Vote Counts
-      const { data: polls } = await supabase
-        .from('polls')
-        .select('*, poll_votes(count)')
-        .order('created_at', { ascending: false })
-        .limit(3);
-      
-      setActivePolls(polls || []);
+      const stored = await AsyncStorage.getItem(SELECTED_GROUP_KEY);
+      const parsedGroup = stored ? JSON.parse(stored) : null;
+      setUserGroup(parsedGroup);
 
-      // 2. Calculate Active Nodes (Unique users active in last 10 mins)
-      const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-      const { count: realActive } = await supabase
-        .from('profiles')
-        .select('*', { count: 'exact', head: true })
-        .gt('last_seen', tenMinsAgo);
+      // Only fetch the user's specific college if they have one
+      let collegeQuery = supabase.from('colleges').select('*').order('name');
+      if (parsedGroup?.collegeId) {
+        collegeQuery = collegeQuery.eq('id', parsedGroup.collegeId);
+      }
 
-      // 3. Calculate Global Stats (Real + Augmented)
-      const augmentedActive = (realActive || 0) + Math.floor(Math.random() * 50) + 120; // Hub vibe
-      setGlobalStats({ active: augmentedActive, reach: (realActive || 0) * 12 + 450 });
-
-      // 4. Fetch Hot Topics (Top reacted messages)
-      const { data: messages } = await supabase
-        .from('messages')
-        .select('*, message_reactions(count)')
-        .order('created_at', { ascending: false })
-        .limit(5);
-      
-      // 5. Fetch Dynamic Categories & Channels
-      const [catsRes, chansRes] = await Promise.all([
-        axios.get(`${BACKEND_URL}/api/categories`),
-        axios.get(`${BACKEND_URL}/api/channels`)
+      const [collRes, catRes, chanRes] = await Promise.all([
+        collegeQuery,
+        supabase.from('categories').select('*').order('name'),
+        supabase.from('channels').select('*').eq('status', 'active').order('name'),
       ]);
-      setCategories(catsRes.data || []);
-      setChannels(chansRes.data || []);
 
-      setLoading(false);
-    } catch (err) {
-      console.error('[HUB] Data fetch error:', err);
+      setColleges(collRes.data || []);
+      setCategories(catRes.data || []);
+      setChannels(chanRes.data || []);
+    } catch (e) {
+      console.warn(e);
+    } finally {
       setLoading(false);
     }
   };
- Jonah
 
-  const [globalStats, setGlobalStats] = useState({ active: 0, reach: 0 });
+  const getCollegeChannel = (collegeId) =>
+    channels.find(ch => ch.college_id === collegeId);
+
+  const globalChannels = channels.filter(ch => ch.is_global);
+  
+  // Filter categories to ONLY the one the user picked, if they picked one.
+  const getCatsByCollege = (collegeId) => {
+    let cats = categories.filter(c => c.college_id === collegeId);
+    if (userGroup?.categoryId) {
+      cats = cats.filter(c => c.id === userGroup.categoryId);
+    }
+    return cats;
+  };
+
+  // Filter channels to ONLY the one specific class they picked
+  const getChannelsByCat = (catId) => {
+    let chans = channels.filter(c => c.category_id === catId && !c.is_global && !c.college_id);
+    if (userGroup?.channel?.id) {
+      chans = chans.filter(c => c.id === userGroup.channel.id);
+    }
+    return chans;
+  };
+
+  const CARD_COLORS = ['#FF6B6B', '#4ECDC4', '#A29BFE', '#FFD93D', '#6BCB77', '#4D96FF'];
+  const CAT_BG = ['#FFF0F0', '#F0FFFC', '#EEF2FF', '#FFFBEB', '#F0FFF4', '#EFF6FF'];
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" />
-      
-      {/* Header */}
+      <StatusBar barStyle="dark-content" backgroundColor="#FAFAFA" />
+
+      {/* Fixed Header */}
       <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <Text style={styles.hubTitle}>Campus Hub</Text>
-          <TouchableOpacity style={styles.profileBtn} onPress={onOpenProfile}>
-            <Text style={styles.profileEmoji}>👤</Text>
-          </TouchableOpacity>
+        <View>
+          <Text style={styles.headerGreeting}>Good to see you 👋</Text>
+          <Text style={styles.headerTitle}>Unfiltered Campus</Text>
         </View>
-        <Text style={styles.hubSubtitle}>CENTRAL_COMMAND_CENTER</Text>
+        <TouchableOpacity style={styles.profileBtn} onPress={onOpenProfile}>
+          <Text style={styles.profileBtnText}>👤</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView 
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 40 }}
-      >
-        {/* Hot Topics Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>PULSE: TRENDING_NOW</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.horizontalScroll}>
-            {activePolls.map(poll => (
-              <TouchableOpacity key={poll.id} style={styles.topicCard} onPress={() => onJoinChat()}>
-                <Text style={styles.topicBadge}>🗳️ ACTIVE POLL</Text>
-                <Text style={styles.topicQuestion} numberOfLines={2}>{poll.question}</Text>
-                <View style={styles.cardFooter}>
-                  <Text style={styles.cardInfo}>{poll.poll_votes?.[0]?.count || 0} VOTES</Text>
-                  <Text style={styles.joinText}>JOIN_CHAT &gt;</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-            {hotTopics.map(msg => (
-               <TouchableOpacity key={msg.id} style={[styles.topicCard, { borderColor: '#DEE2E6' }]} onPress={() => onJoinChat()}>
-                <Text style={[styles.topicBadge, { color: '#6C757D' }]}>💬 HOT MESSAGE</Text>
-                <Text style={styles.topicQuestion} numberOfLines={2}>{msg.content}</Text>
-                <View style={styles.cardFooter}>
-                  <Text style={styles.cardInfo}>TRENDING</Text>
-                  <Text style={styles.joinText}>VIEW &gt;</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+      <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+
+        {/* Hero Banner */}
+        <View style={styles.heroBanner}>
+          <View style={styles.heroBannerLeft}>
+            <Text style={styles.heroBannerBadge}>ANONYMOUS CAMPUS</Text>
+            <Text style={styles.heroBannerTitle}>Your Campus.</Text>
+            <Text style={styles.heroBannerSub}>Global lounges and your specific classes are below.</Text>
+          </View>
+          <Text style={styles.heroBannerEmoji}>🏛️</Text>
         </View>
 
-        {/* Categories Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>DIRECTORY: PROTOCOLS</Text>
-          {categories.map(cat => {
-            const catChannels = channels.filter(ch => ch.category_id === cat.id);
-            if (catChannels.length === 0) return null;
-            
-            return (
-              <View key={cat.id} style={styles.categoryGroup}>
-                <View style={styles.categoryHeader}>
-                  <Text style={styles.catHeaderText}>{cat.icon} {cat.name.toUpperCase()}</Text>
+        {loading ? (
+          <View style={{ paddingTop: 60, alignItems: 'center' }}>
+            <ActivityIndicator color="#6366F1" size="large" />
+            <Text style={styles.loadingText}>Loading campus...</Text>
+          </View>
+        ) : (
+          <>
+            {/* Global Lounge Section */}
+            {globalChannels.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionLabel}>🌐 GLOBAL LOUNGE</Text>
+                  <Text style={styles.sectionSub}>Open to all students</Text>
                 </View>
-                <View style={styles.categoryGrid}>
-                  {catChannels.map(ch => (
-                    <TouchableOpacity key={ch.id} style={styles.categoryCard} onPress={() => onJoinChat(ch.id, ch.name)}>
-                      <View style={styles.catIconBox}>
-                        <Text style={styles.catIcon}>{ch.icon}</Text>
-                      </View>
-                      <Text style={styles.catName}>{ch.name}</Text>
-                      <View style={styles.catStatusRow}>
-                        <View style={styles.statusDotLive} />
-                        <Text style={styles.catStatus}>
-                          {Math.floor(Math.random() * 10) + 2} ACTIVE
-                        </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginLeft: -4 }}>
+                  {globalChannels.map((ch, i) => (
+                    <TouchableOpacity
+                      key={ch.id}
+                      style={[styles.globalCard, { backgroundColor: CARD_COLORS[i % CARD_COLORS.length] }]}
+                      onPress={() => onJoinChat({ id: ch.id, name: ch.name, icon: ch.icon })}
+                      activeOpacity={0.88}
+                    >
+                      <Text style={styles.globalCardEmoji}>{ch.icon}</Text>
+                      <Text style={styles.globalCardName}>{ch.name}</Text>
+                      <View style={styles.globalCardJoin}>
+                        <Text style={styles.globalCardJoinText}>JOIN →</Text>
                       </View>
                     </TouchableOpacity>
                   ))}
-                </View>
+                </ScrollView>
               </View>
-            );
-          })}
-        </View>
+            )}
 
-        {/* Global Stats */}
-        <View style={styles.statsCard}>
-          <View style={styles.statsRow}>
-            <View>
-              <Text style={styles.statsValue}>{globalStats.active}</Text>
-              <Text style={styles.statsLabel}>GLOBAL_NODES_ACTIVE</Text>
-            </View>
-            <View style={styles.statsDivider} />
-            <View>
-              <Text style={styles.statsValue}>{globalStats.reach}</Text>
-              <Text style={styles.statsLabel}>CAMPUS_REACH_LIVE</Text>
-            </View>
-          </View>
-        </View>
+            {/* College Directory: each college = one general chat room + nested categories/classes */}
+            {colleges.map((college, ci) => {
+              const collegeChannel = getCollegeChannel(college.id);
+              const cats = getCatsByCollege(college.id);
+              const hasCats = cats.some(cat => getChannelsByCat(cat.id).length > 0);
+              return (
+                <View key={college.id} style={styles.section}>
+                  <TouchableOpacity
+                    style={[styles.collegeHeader, { borderLeftColor: CARD_COLORS[ci % CARD_COLORS.length] }]}
+                    onPress={() => {
+                      if (collegeChannel) onJoinChat({ id: collegeChannel.id, name: collegeChannel.name, icon: collegeChannel.icon });
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.collegeHeaderEmoji}>{college.icon || '🏛️'}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.collegeHeaderName}>{college.name}</Text>
+                      {collegeChannel
+                        ? <Text style={styles.collegeHeaderSub}>Tap to enter college chat</Text>
+                        : <Text style={[styles.collegeHeaderSub, { color: '#F59E0B' }]}>No chat room yet — ask admin</Text>
+                      }
+                    </View>
+                    {collegeChannel && (
+                      <View style={styles.joinChip}><Text style={styles.joinChipText}>JOIN →</Text></View>
+                    )}
+                  </TouchableOpacity>
+
+                  {/* Render Categories & Classes inside this College */}
+                  {cats.map((cat, catIdx) => {
+                    const chans = getChannelsByCat(cat.id);
+                    if (chans.length === 0) return null; // Only show categories with actual channels
+                    return (
+                      <View key={cat.id} style={[styles.categoryBlock, { backgroundColor: CAT_BG[catIdx % CAT_BG.length] }]}>
+                        <View style={styles.categoryLabelRow}>
+                          <Text style={styles.categoryEmoji}>{cat.icon || '📁'}</Text>
+                          <Text style={styles.categoryName}>{cat.name}</Text>
+                          <Text style={styles.categoryCount}>{chans.length} classes</Text>
+                        </View>
+                        {/* Class Grid */}
+                        <View style={styles.classGrid}>
+                          {chans.map((ch, chi) => (
+                            <TouchableOpacity
+                              key={ch.id}
+                              style={styles.classChip}
+                              onPress={() => onJoinChat({ id: ch.id, name: ch.name, icon: ch.icon })}
+                              activeOpacity={0.85}
+                            >
+                              <View style={[styles.classChipIcon, { backgroundColor: CARD_COLORS[(ci + chi) % CARD_COLORS.length] + '20' }]}>
+                                <Text style={styles.classChipEmoji}>{ch.icon}</Text>
+                              </View>
+                              <Text style={styles.classChipName} numberOfLines={1}>{ch.name}</Text>
+                              <View style={styles.classChipJoin}>
+                                <Text style={styles.classChipJoinText}>→</Text>
+                              </View>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              );
+            })}
+
+            {colleges.length === 0 && globalChannels.length === 0 && (
+              <View style={styles.emptyBox}>
+                <Text style={styles.emptyEmoji}>🏗️</Text>
+                <Text style={styles.emptyTitle}>Campus Under Construction</Text>
+                <Text style={styles.emptySub}>Your admin hasn't set up any classes yet. Check back soon!</Text>
+              </View>
+            )}
+          </>
+        )}
       </ScrollView>
-
-      {/* Join Global CTA */}
-      <TouchableOpacity style={styles.globalFab} onPress={() => onJoinChat()}>
-        <Text style={styles.globalFabText}>ENTER GLOBAL TERMINAL 🚀</Text>
-      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA' },
+
   header: {
-    paddingTop: 20,
-    paddingBottom: 25,
-    paddingHorizontal: 25,
-    backgroundColor: '#FFF',
-    borderBottomWidth: 1.5,
-    borderColor: '#E9ECEF',
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingTop: 56, paddingHorizontal: 22, paddingBottom: 16,
+    backgroundColor: '#FFF', borderBottomWidth: 1, borderColor: '#F1F3F5',
   },
-  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  hubTitle: { fontSize: 32, fontWeight: '900', color: '#1A1A1A', letterSpacing: -1 },
-  hubSubtitle: { fontSize: 10, fontWeight: '900', color: '#6366F1', letterSpacing: 4, marginTop: 5 },
+  headerGreeting: { fontSize: 11, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.5 },
+  headerTitle: { fontSize: 22, fontWeight: '900', color: '#111827', letterSpacing: -0.5 },
   profileBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#F8F9FA',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#E9ECEF',
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1.5, borderColor: '#C7D2FE',
   },
-  profileEmoji: { fontSize: 18 },
-  section: { marginTop: 30 },
-  sectionLabel: { 
-    fontSize: 10, 
-    fontWeight: '900', 
-    color: '#ADB5BD', 
-    letterSpacing: 2, 
-    marginLeft: 25, 
-    marginBottom: 15 
+  profileBtnText: { fontSize: 20 },
+
+  heroBanner: {
+    margin: 20, borderRadius: 24, padding: 24,
+    backgroundColor: '#6366F1', flexDirection: 'row', alignItems: 'center',
+    shadowColor: '#6366F1', shadowOpacity: 0.3, shadowRadius: 16, elevation: 8,
   },
-  horizontalScroll: { paddingLeft: 25 },
-  topicCard: {
-    width: 200,
-    height: 140,
+  heroBannerLeft: { flex: 1 },
+  heroBannerBadge: {
+    fontSize: 9, fontWeight: '900', color: 'rgba(255,255,255,0.7)', letterSpacing: 2, marginBottom: 8,
+  },
+  heroBannerTitle: { fontSize: 26, fontWeight: '900', color: '#FFF', lineHeight: 30, marginBottom: 10 },
+  heroBannerSub: { fontSize: 11, color: 'rgba(255,255,255,0.7)', fontWeight: '600' },
+  heroBannerEmoji: { fontSize: 56, marginLeft: 12 },
+
+  loadingText: { marginTop: 14, fontSize: 14, color: '#9CA3AF', fontWeight: '600' },
+
+  section: { paddingHorizontal: 20, marginTop: 8, marginBottom: 4 },
+  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  sectionLabel: { fontSize: 13, fontWeight: '900', color: '#111827' },
+  sectionSub: { fontSize: 11, color: '#9CA3AF', fontWeight: '600' },
+
+  // Global Lounge horizontal cards
+  globalCard: {
+    width: 160, borderRadius: 20, padding: 18, marginRight: 12, marginLeft: 4,
+    shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, elevation: 3,
+  },
+  globalCardEmoji: { fontSize: 30, marginBottom: 10 },
+  globalCardName: { fontSize: 15, fontWeight: '900', color: '#FFF', marginBottom: 12, lineHeight: 20 },
+  globalCardJoin: {
+    backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 10,
+    paddingHorizontal: 10, paddingVertical: 5, alignSelf: 'flex-start',
+  },
+  globalCardJoinText: { fontSize: 11, fontWeight: '900', color: '#FFF' },
+
+  // College row — tap to join
+  collegeHeader: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 16, paddingHorizontal: 16,
+    borderLeftWidth: 5, borderRadius: 14, marginBottom: 4,
     backgroundColor: '#FFF',
-    borderRadius: 25,
-    padding: 20,
-    marginRight: 15,
-    borderWidth: 1.5,
-    borderColor: '#6366F1',
-    shadowColor: '#6366F1',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 5,
-    justifyContent: 'space-between'
+    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, elevation: 1,
   },
-  topicBadge: { fontSize: 9, fontWeight: '900', color: '#6366F1', letterSpacing: 1 },
-  topicQuestion: { fontSize: 15, fontWeight: '700', color: '#1A1A1A', lineHeight: 20 },
-  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardInfo: { fontSize: 9, fontWeight: '800', color: '#ADB5BD' },
-  joinText: { fontSize: 9, fontWeight: '900', color: '#6366F1' },
-  categoryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 15
+  collegeHeaderEmoji: { fontSize: 26, marginRight: 12 },
+  collegeHeaderName: { fontSize: 16, fontWeight: '900', color: '#111827' },
+  collegeHeaderSub: { fontSize: 11, color: '#9CA3AF', marginTop: 2, fontWeight: '500' },
+  joinChip: {
+    backgroundColor: '#EEF2FF', borderRadius: 12,
+    paddingHorizontal: 12, paddingVertical: 8,
+    borderWidth: 1, borderColor: '#C7D2FE',
   },
-  categoryGroup: {
-    marginBottom: 35,
+  joinChipText: { fontSize: 11, fontWeight: '900', color: '#6366F1' },
+
+  // Category block
+  categoryBlock: { borderRadius: 18, padding: 14, marginBottom: 12 },
+  categoryLabelRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, paddingHorizontal: 4 },
+  categoryEmoji: { fontSize: 16, marginRight: 8 },
+  categoryName: { fontSize: 13, fontWeight: '900', color: '#374151', flex: 1 },
+  categoryCount: { fontSize: 10, fontWeight: '800', color: '#9CA3AF' },
+
+  // Class grid chips
+  classGrid: { gap: 8 },
+  classChip: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#FFF', borderRadius: 14, padding: 12,
+    borderWidth: 1, borderColor: '#E5E7EB',
+    shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 4, elevation: 1,
   },
-  categoryHeader: {
-    marginBottom: 15,
-    paddingLeft: 5,
-    borderLeftWidth: 3,
-    borderLeftColor: '#6366F1',
-    paddingVertical: 2,
+  classChipIcon: { width: 38, height: 38, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 10 },
+  classChipEmoji: { fontSize: 20 },
+  classChipName: { flex: 1, fontSize: 14, fontWeight: '800', color: '#111827' },
+  classChipJoin: {
+    width: 30, height: 30, borderRadius: 10,
+    backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center',
   },
-  catHeaderText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#6366F1',
-    letterSpacing: 2,
-    marginLeft: 8,
-  },
-  categoryCard: {
-    width: (Dimensions.get('window').width - 65) / 2,
-    backgroundColor: '#FFF',
-    borderRadius: 25,
-    padding: 20,
-    borderWidth: 1.5,
-    borderColor: '#E9ECEF',
-    alignItems: 'center'
-  },
-  catIconBox: {
-    width: 50,
-    height: 50,
-    borderRadius: 20,
-    backgroundColor: '#F8F9FA',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: '#E9ECEF'
-  },
-  catIcon: { fontSize: 24 },
-  catName: { fontSize: 12, fontWeight: '800', color: '#1A1A1A', textAlign: 'center' },
-  catStatusRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
-  statusDotLive: { width: 4, height: 4, borderRadius: 2, backgroundColor: '#28A745', marginRight: 5 },
-  catStatus: { fontSize: 8, fontWeight: '900', color: '#6C757D', letterSpacing: 0.5 },
-  statsCard: {
-    margin: 25,
-    backgroundColor: '#1A1A1D',
-    borderRadius: 30,
-    padding: 25,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 15,
-  },
-  statsRow: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center' },
-  statsValue: { color: '#FFF', fontSize: 24, fontWeight: '900' },
-  statsLabel: { color: '#6366F1', fontSize: 9, fontWeight: '900', letterSpacing: 2, marginTop: 4 },
-  statsDivider: { width: 1, height: 40, backgroundColor: '#333' },
-  globalFab: {
-    position: 'absolute',
-    bottom: 30,
-    left: 25,
-    right: 25,
-    backgroundColor: '#6366F1',
-    borderRadius: 25,
-    padding: 18,
-    alignItems: 'center',
-    shadowColor: '#6366F1',
-    shadowOpacity: 0.4,
-    shadowRadius: 15,
-    elevation: 10
-  },
-  globalFabText: { color: '#FFF', fontSize: 14, fontWeight: '900', letterSpacing: 2 }
+  classChipJoinText: { fontSize: 14, color: '#6366F1', fontWeight: '900' },
+
+  // Empty
+  emptyBox: { marginTop: 60, padding: 40, alignItems: 'center' },
+  emptyEmoji: { fontSize: 52, marginBottom: 16 },
+  emptyTitle: { fontSize: 20, fontWeight: '900', color: '#111827', marginBottom: 8 },
+  emptySub: { fontSize: 13, color: '#9CA3AF', textAlign: 'center', lineHeight: 20 },
 });
