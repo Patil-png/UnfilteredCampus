@@ -5,12 +5,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 
 // Fallback for reading device id directly
-const getStableDeviceId = async () => {
+// Stable identity: Prefer Supabase user.id, fallback to device storage if needed
+const getStableIdentity = async (user) => {
+  if (user?.id) return user.id;
   try {
     const id = await AsyncStorage.getItem('@unfiltered_device_id');
-    return id || 'unknown_device';
+    return id || 'unknown_user';
   } catch (e) {
-    return 'unknown_device';
+    return 'unknown_user';
   }
 };
 
@@ -46,9 +48,9 @@ export default function ProfileScreen({ user, onBack, onGroupChanged }) {
 
   const loadProfileAndData = async () => {
     try {
-      const deviceId = await getStableDeviceId();
+      const identity = await getStableIdentity(user);
       const [profRes, collRes, catRes, chanRes, storedGroup] = await Promise.all([
-        axios.get(`${BACKEND_URL}/api/profiles/${deviceId}`).catch(() => ({ data: null })),
+        axios.get(`${BACKEND_URL}/api/profiles/${identity}`).catch(() => ({ data: null })),
         supabase.from('colleges').select('*').order('name'),
         supabase.from('categories').select('*').order('name'),
         supabase.from('channels').select('*').order('name'),
@@ -92,8 +94,8 @@ export default function ProfileScreen({ user, onBack, onGroupChanged }) {
     if (!nickname.trim()) return Alert.alert('Required', 'Please enter a nickname.');
     setLoading(true);
     try {
-      const deviceId = await getStableDeviceId();
-      await axios.post(`${BACKEND_URL}/api/profiles`, { userId: deviceId, nickname: nickname.trim(), avatarUrl: '' });
+      const identity = await getStableIdentity(user);
+      await axios.post(`${BACKEND_URL}/api/profiles`, { userId: identity, nickname: nickname.trim(), avatarUrl: '' });
       Alert.alert('✅ Saved!', 'Your nickname has been updated.');
     } catch (error) {
       Alert.alert('Error', 'Failed to update profile');

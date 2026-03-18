@@ -5,7 +5,7 @@ import axios from 'axios';
 import * as Application from 'expo-application';
 import { supabase } from '../supabaseClient';
 
-const BACKEND_URL = 'http://192.168.29.243:5000';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.243:5000';
 
 const EMOJI_SECTIONS = [
   { title: 'SMILEYS', emojis: ['😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🤩', '🥳', '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '☹️', '😣', '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠', '😡', '🤬', '🤯', '😳', '🥵', '🥶', '😱', '😨', '😰', '😥', '😓', '🤗', '🤔', '🤭', '🤫', '🤥', '😶', '😐', '😑', '😬', '🙄', '😯', '😦', '😧', '😮', '😲', '🥱', '😴', '🤤', '😪', '😵', '🤐', '🥴', '🤢', '🤮', '🤧', '😷', '🤒', '🤕'] },
@@ -128,14 +128,18 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
   }, [channel?.id]);  // Re-subscribe when group changes
 
   const initChat = async () => {
-    let id = await getStableDeviceId();
+    let id = await getStableIdentity();
     setDeviceId(id);
     fetchMaskId(id);
     fetchMessages();
     fetchPolls();
   };
 
-  const getStableDeviceId = async () => {
+  const getStableIdentity = async () => {
+    // Priority 1: Supabase Authenticated User ID (Persistent across devices)
+    if (user?.id) return user.id;
+
+    // Fallback: Device ID (For legacy compatibility or if not logged in)
     try {
       let id = null;
       if (Platform.OS === 'android') {
@@ -143,12 +147,9 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
       } else if (Platform.OS === 'ios') {
         id = await Application.getIosIdForVendorAsync();
       }
-      const finalId = id || user?.id || 'unknown_device';
-      console.log('[CHAT] Selected Device ID:', finalId);
-      return finalId;
+      return id || 'unknown_user_id';
     } catch (e) {
-      console.warn('[CHAT] Error getting device ID:', e);
-      return user?.id || 'unknown_error_id';
+      return 'unknown_error_id';
     }
   };
 
