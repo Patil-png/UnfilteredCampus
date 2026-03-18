@@ -4,6 +4,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import axios from 'axios';
 import * as Application from 'expo-application';
 import { supabase } from '../supabaseClient';
+import CustomAlert from '../components/CustomAlert';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.243:5000';
 
@@ -31,6 +32,16 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
   const [newPollQuestion, setNewPollQuestion] = useState('');
   const [newPollOptions, setNewPollOptions] = useState(['', '']);
   const [replyingTo, setReplyingTo] = useState(null);
+
+  // Custom Alert State
+  const [alert, setAlert] = useState({
+    visible: false, title: '', message: '', type: 'info',
+    onConfirm: null, confirmText: 'OK', cancelText: 'Cancel'
+  });
+
+  const showAlert = (title, message, type = 'info', onConfirm = null, confirmText = 'OK', cancelText = 'Cancel') => {
+    setAlert({ visible: true, title, message, type, onConfirm, confirmText, cancelText });
+  };
 
   // Bottom Sheet Animation
   const screenHeight = Dimensions.get('window').height;
@@ -172,18 +183,22 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
       }
     } catch (error) {
       if (error.response && error.response.data.banned) {
-        Alert.alert('Device Banned', 'This device has been permanently banned for violating guidelines.');
-        supabase.auth.signOut();
+        showAlert('Device Banned', 'This device has been permanently banned for violating guidelines.', 'error', () => {
+          setAlert(prev => ({ ...prev, visible: false }));
+          supabase.auth.signOut();
+        });
       }
     }
   };
 
   const fetchMessages = async () => {
     try {
+      if (!channel?.id || channel.id === 'undefined') return;
+
       const { data, error } = await supabase
         .from('messages')
-        .select('*, message_reactions(*)')
-        .eq('channel_id', channel?.id)
+        .select('*, profiles:sender_id(nickname), message_reactions(*)')
+        .eq('channel_id', channel.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -194,33 +209,41 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
   };
 
   const fetchPolls = async () => {
+    if (!channel?.id || channel.id === 'undefined') return;
     const { data, error } = await supabase
       .from('polls')
       .select(`
         *,
+        profiles:creator_id (nickname),
         poll_votes (option_index, mask_id)
       `)
-      .order('created_at', { ascending: false });
+      .eq('channel_id', channel.id)
+      .order('created_at', { ascending: false })
+      .limit(10);
 
     if (error) console.error('[POLLS] Fetch error:', error);
-    else setPolls(data);
+    else setPolls(data || []);
   };
 
   const sendMessage = async () => {
     if (!content.trim()) return;
 
     try {
+      if (!channel?.id || channel.id === 'undefined') {
+        showAlert('Error', 'Invalid channel ID. Please try again.', 'error');
+        return;
+      }
       const response = await axios.post(`${BACKEND_URL}/api/messages`, {
         userId: user.id,
         content: content.trim(),
-        channelId: channel?.id,
+        channelId: channel.id,
         replyToId: replyingTo?.id || null
       });
       setContent('');
       setReplyingTo(null);
       fetchMessages();
     } catch (error) {
-      Alert.alert('Error', error.response?.data?.message || 'Failed to send message');
+      showAlert('Error', error.response?.data?.message || 'Failed to send message', 'error');
     }
   };
 
@@ -246,25 +269,22 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
   };
 
   const reportMessage = (messageId) => {
-    Alert.alert(
+    showAlert(
       'Report Message',
       'Are you sure you want to report this message for vulgarity or bullying?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Report',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await axios.post(`${BACKEND_URL}/api/messages/report`, { messageId });
-              Alert.alert('Reported', 'Thank you. A moderator will review this message shortly.');
-              fetchMessages();
-            } catch (e) {
-              Alert.alert('Error', 'Failed to report message.');
-            }
-          }
+      'confirm',
+      async () => {
+        setAlert(prev => ({ ...prev, visible: false }));
+        try {
+          await axios.post(`${BACKEND_URL}/api/messages/report`, { messageId });
+          showAlert('Reported', 'Thank you. A moderator will review this message shortly.', 'success');
+          fetchMessages();
+        } catch (e) {
+          showAlert('Error', 'Failed to report message.', 'error');
         }
-      ]
+      },
+      'REPORT',
+      'CANCEL'
     );
   };
 
@@ -277,7 +297,7 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
       });
       fetchPolls();
     } catch (error) {
-      Alert.alert('Voting Error', error.response?.data?.error || 'Failed to cast vote');
+      showAlert('Voting Error', error.response?.data?.error || 'Failed to cast vote', 'error');
     }
   };
 
@@ -287,7 +307,7 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
 
   const broadcastPoll = async () => {
     if (!newPollQuestion.trim() || newPollOptions.some(opt => !opt.trim())) {
-      Alert.alert('Incomplete Poll', 'Please provide a question and at least two valid options.');
+      showAlert('Incomplete Poll', 'Please provide a question and at least two valid options.', 'info');
       return;
     }
 
@@ -301,9 +321,9 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
       setIsCreatingPoll(false);
       setNewPollQuestion('');
       setNewPollOptions(['', '']);
-      Alert.alert('Pulse Sent', 'Your custom anonymous poll has been broadcasted to the campus.');
+      showAlert('Pulse Sent', 'Your custom anonymous poll has been broadcasted to the campus.', 'success');
     } catch (err) {
-      Alert.alert('Error', 'Failed to trigger pulse.');
+      showAlert('Error', 'Failed to trigger pulse.', 'error');
     }
   };
 
@@ -513,7 +533,7 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
                                 return (
                                   <View style={styles.quoteBlock}>
                                     <Text style={styles.quoteNickname} numberOfLines={1}>
-                                      {repliedMsg.sender_id === maskId ? '(YOU)' : 'ANONYMOUS'}
+                                      {repliedMsg.sender_id === maskId ? '(YOU)' : (repliedMsg.profiles?.nickname || 'ANONYMOUS')}
                                     </Text>
                                     <Text style={styles.quoteText} numberOfLines={2}>
                                       {repliedMsg.content}
@@ -568,7 +588,7 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
               <View style={styles.replyPreview}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.replyPreviewHeader}>
-                    {replyingTo.sender_id === maskId ? 'You' : 'Anonymous'}
+                    {replyingTo.sender_id === maskId ? 'You' : (replyingTo.profiles?.nickname || 'Anonymous')}
                   </Text>
                   <Text style={styles.replyPreviewText} numberOfLines={1}>{replyingTo.content}</Text>
                 </View>
@@ -759,6 +779,17 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
           </KeyboardAvoidingView>
         </View>
       </Modal>
+
+      <CustomAlert
+        visible={alert.visible}
+        title={alert.title}
+        message={alert.message}
+        type={alert.type}
+        onClose={() => setAlert({ ...alert, visible: false })}
+        onConfirm={alert.onConfirm}
+        confirmText={alert.confirmText}
+        cancelText={alert.cancelText}
+      />
     </View>
   );
 }

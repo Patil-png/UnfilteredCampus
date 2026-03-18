@@ -6,56 +6,75 @@ import {
 import { supabase } from '../supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const SELECTED_GROUP_KEY = '@unfiltered_selected_group';
+const SELECTED_GROUP_KEY = '@campus_selected_group';
 
 const { width } = Dimensions.get('window');
 
-export default function HomeScreen({ user, onJoinChat, onOpenProfile }) {
+export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onOpenProfile }) {
   const [colleges, setColleges] = useState([]);
   const [categories, setCategories] = useState([]);
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [userGroup, setUserGroup] = useState(null);
+  const [userGroup, setUserGroup] = useState(propGroup);
+  const [showFullDirectory, setShowFullDirectory] = useState(false);
 
   useEffect(() => {
+    if (propGroup) setUserGroup(propGroup);
     fetchHierarchy();
     const channelSub = supabase
       .channel('public:channels:hub')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'channels' }, () => fetchHierarchy())
       .subscribe();
     return () => supabase.removeChannel(channelSub);
-  }, []);
+  }, [propGroup]);
 
   const fetchHierarchy = async () => {
     try {
       const stored = await AsyncStorage.getItem(SELECTED_GROUP_KEY);
       const parsedGroup = stored ? JSON.parse(stored) : null;
-      setUserGroup(parsedGroup);
+      
+      // Merge: prefer propGroup if available, else use stored
+      const activeGroup = propGroup || parsedGroup; 
+      if (activeGroup && !userGroup) setUserGroup(activeGroup);
 
-      // Only fetch the user's specific college if they have one
+      // OPTIMISTIC: If we have a group, don't show full-screen loader
+      if (activeGroup) setLoading(false);
+
+      // 1. Build filtered queries
       let collegeQuery = supabase.from('colleges').select('*').order('name');
-      if (parsedGroup?.collegeId) {
-        collegeQuery = collegeQuery.eq('id', parsedGroup.collegeId);
+      let categoryQuery = supabase.from('categories').select('*').order('name');
+      let channelQuery = supabase.from('channels').select('*').eq('status', 'active');
+
+      if (activeGroup?.collegeId) {
+        collegeQuery = collegeQuery.eq('id', activeGroup.collegeId);
+        categoryQuery = categoryQuery.eq('college_id', activeGroup.collegeId);
+        // Only fetch college lounge and batches (limit to prevent timeout)
+        channelQuery = channelQuery.or(`college_id.eq.${activeGroup.collegeId},is_global.eq.true,category_id.not.is.null`).limit(50);
+      } else {
+        // Full directory: Apply strict limits
+        collegeQuery = collegeQuery.limit(20);
+        categoryQuery = categoryQuery.limit(20);
+        channelQuery = channelQuery.limit(50);
       }
 
       const [collRes, catRes, chanRes] = await Promise.all([
         collegeQuery,
-        supabase.from('categories').select('*').order('name'),
-        supabase.from('channels').select('*').eq('status', 'active').order('name'),
+        categoryQuery,
+        channelQuery
       ]);
 
       setColleges(collRes.data || []);
       setCategories(catRes.data || []);
       setChannels(chanRes.data || []);
     } catch (e) {
-      console.warn(e);
+      console.warn('[HOME] Fetch error:', e);
     } finally {
       setLoading(false);
     }
   };
 
   const getCollegeChannel = (collegeId) =>
-    channels.find(ch => ch.college_id === collegeId);
+    channels.find(ch => ch.college_id === collegeId && !ch.category_id);
 
   const globalChannels = channels.filter(ch => ch.is_global);
   
@@ -101,11 +120,74 @@ export default function HomeScreen({ user, onJoinChat, onOpenProfile }) {
         <View style={styles.heroBanner}>
           <View style={styles.heroBannerLeft}>
             <Text style={styles.heroBannerBadge}>ANONYMOUS CAMPUS</Text>
-            <Text style={styles.heroBannerTitle}>Your Campus.</Text>
-            <Text style={styles.heroBannerSub}>Global lounges and your specific classes are below.</Text>
+            <Text style={styles.heroBannerTitle}>My Campus.</Text>
+            <Text style={styles.heroBannerSub}>Quickly join your primary classes and lounges below.</Text>
           </View>
           <Text style={styles.heroBannerEmoji}>🏛️</Text>
         </View>
+
+        {/* Personalized "MY COLLEGE" Section */}
+        {userGroup?.collegeId && (
+          <View style={styles.mySection}>
+            {/* Primary Batch Class (Only if selected) */}
+            {userGroup?.channel && (
+              <>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionLabel}>✨ MY PRIMARY CLASS</Text>
+                </View>
+                <TouchableOpacity 
+                  style={styles.myClassCard} 
+                  onPress={() => onJoinChat(userGroup.channel)}
+                  activeOpacity={0.9}
+                >
+                  <View style={styles.myClassLeft}>
+                    <View style={[styles.myClassIconBox, { backgroundColor: '#EEF2FF' }]}>
+                      <Text style={styles.myClassEmoji}>{userGroup.channel.icon || '🎓'}</Text>
+                    </View>
+                    <View>
+                      <Text style={styles.myClassLabel}>SELECTED BATCH</Text>
+                      <Text style={styles.myClassName}>{userGroup.channel.name}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.enterChatBtn}>
+                    <Text style={styles.enterChatText}>CHAT</Text>
+                  </View>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {/* College General Chat (Lounge) - Always visible for college members */}
+            {(() => {
+              const collegeChannel = getCollegeChannel(userGroup.collegeId);
+              if (!collegeChannel) return null;
+              return (
+                <>
+                  <View style={[styles.sectionHeaderRow, { marginTop: userGroup?.channel ? 20 : 0 }]}>
+                    <Text style={[styles.sectionLabel, { color: '#10B981' }]}>🏛️ COLLEGE HUB</Text>
+                  </View>
+                  <TouchableOpacity 
+                    style={[styles.myClassCard, { borderColor: '#D1FAE5', backgroundColor: '#F0FDF4' }]} 
+                    onPress={() => onJoinChat(collegeChannel)}
+                    activeOpacity={0.9}
+                  >
+                    <View style={styles.myClassLeft}>
+                      <View style={[styles.myClassIconBox, { backgroundColor: '#ECFDF5' }]}>
+                        <Text style={styles.myClassEmoji}>🏛️</Text>
+                      </View>
+                      <View>
+                        <Text style={[styles.myClassLabel, { color: '#10B981' }]}>GENERAL LOUNGE</Text>
+                        <Text style={styles.myClassName}>{collegeChannel.name}</Text>
+                      </View>
+                    </View>
+                    <View style={[styles.enterChatBtn, { backgroundColor: '#10B981' }]}>
+                      <Text style={styles.enterChatText}>CHAT</Text>
+                    </View>
+                  </TouchableOpacity>
+                </>
+              );
+            })()}
+          </View>
+        )}
 
         {loading ? (
           <View style={{ paddingTop: 60, alignItems: 'center' }}>
@@ -140,8 +222,8 @@ export default function HomeScreen({ user, onJoinChat, onOpenProfile }) {
               </View>
             )}
 
-            {/* College Directory: each college = one general chat room + nested categories/classes */}
-            {colleges.map((college, ci) => {
+            {/* Full College Directory - Hidden by default if user has a class */}
+            {(showFullDirectory || !userGroup?.channel) && colleges.map((college, ci) => {
               const collegeChannel = getCollegeChannel(college.id);
               const cats = getCatsByCollege(college.id);
               const hasCats = cats.some(cat => getChannelsByCat(cat.id).length > 0);
@@ -308,6 +390,31 @@ const styles = StyleSheet.create({
     backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center',
   },
   classChipJoinText: { fontSize: 14, color: '#6366F1', fontWeight: '900' },
+
+  // My Class Card
+  mySection: { paddingHorizontal: 20, marginTop: 4, marginBottom: 12 },
+  myClassCard: { 
+    backgroundColor: '#FFF', borderRadius: 24, padding: 20, 
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderWidth: 2, borderColor: '#6366F1',
+    shadowColor: '#6366F1', shadowOpacity: 0.15, shadowRadius: 12, elevation: 5,
+  },
+  myClassLeft: { flexDirection: 'row', alignItems: 'center' },
+  myClassIconBox: { 
+    width: 48, height: 48, borderRadius: 14, 
+    backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center', marginRight: 14,
+  },
+  myClassEmoji: { fontSize: 24 },
+  myClassLabel: { fontSize: 10, fontWeight: '900', color: '#6366F1', letterSpacing: 1, marginBottom: 2 },
+  myClassName: { fontSize: 17, fontWeight: '900', color: '#111827' },
+  enterChatBtn: { 
+    backgroundColor: '#6366F1', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10,
+    shadowColor: '#6366F1', shadowOpacity: 0.3, shadowRadius: 8, elevation: 3,
+  },
+  enterChatText: { color: '#FFF', fontSize: 12, fontWeight: '900' },
+
+  discoverBtn: { alignSelf: 'center', marginTop: 20, padding: 12 },
+  discoverBtnText: { color: '#6366F1', fontSize: 13, fontWeight: '800', textDecorationLine: 'underline' },
 
   // Empty
   emptyBox: { marginTop: 60, padding: 40, alignItems: 'center' },

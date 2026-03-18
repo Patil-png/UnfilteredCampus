@@ -9,9 +9,13 @@ import ChatScreen from './screens/ChatScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import HomeScreen from './screens/HomeScreen';
 import OnboardingScreen from './screens/OnboardingScreen';
+import axios from 'axios';
+
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.243:5000';
 
 const ONBOARDING_DONE_KEY = '@campus_onboarding_done';
 const SELECTED_GROUP_KEY = '@campus_selected_group';
+const USER_SESSION_KEY = '@campus_user_session';
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -19,32 +23,97 @@ export default function App() {
   const [selectedChannel, setSelectedChannel] = useState(null);
   const [savedGroup, setSavedGroup] = useState(null);
   const [onboardingDone, setOnboardingDone] = useState(null); // null = not checked yet
+  const [forceSignup, setForceSignup] = useState(false);
 
   useEffect(() => {
-    // Listen to auth
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-    supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
-
-    // Load saved data
-    loadStoredData();
-
-    return () => subscription.unsubscribe();
+    // Load session and onboarding state
+    initializeApp();
   }, []);
 
-  const loadStoredData = async () => {
+  const initializeApp = async () => {
     try {
-      const done = await AsyncStorage.getItem(ONBOARDING_DONE_KEY);
-      setOnboardingDone(done === 'true');
+      // 1. FAST PATH: Load all local state at once
+      const [storedSession, storedOnboarding, storedGroup] = await Promise.all([
+        AsyncStorage.getItem(USER_SESSION_KEY),
+        AsyncStorage.getItem(ONBOARDING_DONE_KEY),
+        AsyncStorage.getItem(SELECTED_GROUP_KEY)
+      ]);
 
-      const raw = await AsyncStorage.getItem(SELECTED_GROUP_KEY);
-      if (raw) {
-        const saved = JSON.parse(raw);
-        if (saved?.channel) setSavedGroup(saved.channel);
+      // 2. Set Session immediately
+      let activeMaskId = null;
+      if (storedSession) {
+        const parsed = JSON.parse(storedSession);
+        if (parsed.user) {
+          setSession(parsed);
+          activeMaskId = parsed.maskId;
+        } else {
+          setSession({ user: parsed, maskId: null });
+        }
       }
-    } catch (_) {
+
+      // 3. Set Onboarding status immediately
+      setOnboardingDone(storedOnboarding === 'true');
+
+      // 4. Set Group from local storage immediately (Fast render)
+      if (storedGroup) {
+        const parsed = JSON.parse(storedGroup);
+        if (parsed?.channel) setSavedGroup(parsed);
+      }
+
+      // 5. BACKGROUND SYNC: Update from cloud without blocking UI
+      if (activeMaskId && activeMaskId !== 'undefined' && activeMaskId !== 'null') {
+        // Run sync in background
+        fetchAndSyncProfile(activeMaskId);
+      }
+    } catch (err) {
+      console.warn('[APP] Init error:', err);
       setOnboardingDone(false);
+    }
+  };
+
+  const fetchAndSyncProfile = async (maskId) => {
+    try {
+      const { data: profile } = await axios.get(`${BACKEND_URL}/api/profiles/${maskId}`); 
+      if (profile?.selected_channel) {
+        const channelData = {
+          collegeId: profile.selected_channel.college_id || profile.selected_channel.categories?.college_id,
+          categoryId: profile.selected_channel.category_id,
+          channel: {
+            id: profile.selected_channel.id,
+            name: profile.selected_channel.name,
+            icon: profile.selected_channel.icon
+          }
+        };
+        await AsyncStorage.setItem(SELECTED_GROUP_KEY, JSON.stringify(channelData));
+        setSavedGroup(channelData);
+      }
+    } catch (syncErr) {
+      console.warn('[APP] Background sync error:', syncErr.message);
+    }
+  };
+
+  const handleLoginSuccess = async (user, wasLogin, maskId) => {
+    try {
+      const sessionData = { user, maskId };
+      await AsyncStorage.setItem(USER_SESSION_KEY, JSON.stringify(sessionData));
+      setSession(sessionData);
+      
+      if (wasLogin) {
+        // BACKGROUND SYNC: Restore selection without blocking the screen change
+        if (maskId && maskId !== 'undefined' && maskId !== 'null') {
+          fetchAndSyncProfile(maskId);
+        }
+
+        await AsyncStorage.setItem(ONBOARDING_DONE_KEY, 'true');
+        setOnboardingDone(true);
+        setCurrentScreen('home');
+      } else {
+        // Sign up: Reset onboarding for new user
+        await AsyncStorage.setItem(ONBOARDING_DONE_KEY, 'false');
+        setOnboardingDone(false);
+      }
+    } catch (err) {
+      console.error('[APP] Login success error:', err);
     }
   };
 
@@ -57,14 +126,38 @@ export default function App() {
   };
 
   // Navigate to chat — accepts a full channel object { id, name, icon }
-  const goToChat = (channel) => {
-    const target = channel || savedGroup;
-    if (!target) {
-      setCurrentScreen('profile');
-      return;
+  const goToChat = async (passedChannel) => {
+    try {
+      // 1. If we have a valid channel, go there
+      if (passedChannel?.id && passedChannel.id !== 'undefined') {
+        setSelectedChannel(passedChannel);
+        setCurrentScreen('chat');
+        return;
+      }
+
+      // 2. FALLBACK: Try to find the General Lounge for this college
+      const collegeId = savedGroup?.collegeId;
+      if (collegeId) {
+        const { data: lounge } = await supabase
+          .from('channels')
+          .select('*')
+          .eq('college_id', collegeId)
+          .eq('status', 'active')
+          .maybeSingle();
+
+        if (lounge) {
+          setSelectedChannel(lounge);
+          setCurrentScreen('chat');
+          return;
+        }
+      }
+
+      // 3. Last Resort: Go to Home or Alert
+      setCurrentScreen('home');
+      console.warn('[APP] Could not find a valid chat room to join.');
+    } catch (err) {
+      console.error('[APP] Join chat error:', err);
     }
-    setSelectedChannel(target);
-    setCurrentScreen('chat');
   };
 
   const handleGroupChanged = (channel) => {
@@ -72,9 +165,48 @@ export default function App() {
     setSelectedChannel(channel);
   };
 
+  const handleDeleteAccount = async () => {
+    try {
+      const uId = session?.user?.id;
+      if (!uId) {
+        console.warn('[APP] Cannot delete: Missing userId in session');
+        return;
+      }
+
+      await axios.post(`${BACKEND_URL}/api/auth/delete`, { userId: uId });
+    } catch (err) {
+      console.error('[APP] Delete account error:', err);
+      throw err;
+    }
+  };
+
+  const handleLogout = async (goToSignup = false) => {
+    try {
+      await AsyncStorage.multiRemove([USER_SESSION_KEY, ONBOARDING_DONE_KEY, SELECTED_GROUP_KEY]);
+      setSession(null);
+      setOnboardingDone(false);
+      setSavedGroup(null);
+      setCurrentScreen('home');
+      // If we want to force signup mode:
+      if (goToSignup) {
+        setForceSignup(true);
+      }
+    } catch (err) {
+      console.error('[APP] Logout error:', err);
+    }
+  };
+
   const renderScreen = () => {
     if (!session || !session.user) {
-      return <LoginScreen onLoginSuccess={(user) => setSession({ user })} />;
+      return (
+        <LoginScreen 
+          onLoginSuccess={(user, wasLogin, mId) => {
+            setForceSignup(false);
+            handleLoginSuccess(user, wasLogin, mId);
+          }} 
+          initialMode={forceSignup ? 'signup' : 'login'}
+        />
+      );
     }
 
     // Still loading stored state
@@ -84,15 +216,23 @@ export default function App() {
 
     // First time: show onboarding group selection
     if (!onboardingDone) {
-      return <OnboardingScreen onComplete={handleOnboardingComplete} />;
+      return (
+        <OnboardingScreen 
+          user={session?.user} 
+          onComplete={handleOnboardingComplete} 
+        />
+      );
     }
 
     if (currentScreen === 'profile') {
       return (
         <ProfileScreen
           user={session.user}
+          maskId={session.maskId}
           onBack={() => setCurrentScreen('home')}
           onGroupChanged={handleGroupChanged}
+          onDeleteAccount={handleDeleteAccount}
+          onLogout={handleLogout}
         />
       );
     }
@@ -112,6 +252,7 @@ export default function App() {
     return (
       <HomeScreen
         user={session.user}
+        userGroup={savedGroup} // Pass the synced group
         onJoinChat={(channel) => goToChat(channel)}
         onOpenProfile={() => setCurrentScreen('profile')}
       />

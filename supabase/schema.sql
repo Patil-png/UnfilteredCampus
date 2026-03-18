@@ -89,7 +89,7 @@ CREATE TABLE public.polls (
     question TEXT NOT NULL,
     options JSONB NOT NULL,
     channel_id UUID REFERENCES public.channels(id) ON DELETE CASCADE,
-    created_by TEXT,
+    creator_id TEXT REFERENCES public.profiles(mask_id) ON DELETE SET NULL,
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT now()
 );

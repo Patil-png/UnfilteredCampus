@@ -5,12 +5,16 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../supabaseClient';
+import CustomAlert from '../components/CustomAlert';
+import axios from 'axios';
+
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.243:5000';
 
 const { width } = Dimensions.get('window');
 const ONBOARDING_DONE_KEY = '@campus_onboarding_done';
 const SELECTED_GROUP_KEY = '@campus_selected_group';
 
-export default function OnboardingScreen({ onComplete }) {
+export default function OnboardingScreen({ user: sessionUser, onComplete }) {
   const [step, setStep] = useState(1);
   const [colleges, setColleges] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -19,6 +23,13 @@ export default function OnboardingScreen({ onComplete }) {
   const [selectedCollege, setSelectedCollege] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [selectedChannel, setSelectedChannel] = useState(null);
+
+  // Custom Alert State
+  const [alert, setAlert] = useState({ visible: false, title: '', message: '', type: 'info' });
+
+  const showAlert = (title, message, type = 'info') => {
+    setAlert({ visible: true, title, message, type });
+  };
 
   useEffect(() => { fetchData(); }, []);
 
@@ -39,16 +50,33 @@ export default function OnboardingScreen({ onComplete }) {
   const globalChannels = channels.filter(c => c.is_global);
 
   const handleFinish = async () => {
-    if (!selectedChannel) { Alert.alert('Required', 'Please select a class to continue.'); return; }
+    if (!selectedChannel) { showAlert('Required', 'Please select a class to continue.', 'info'); return; }
     try {
-      await AsyncStorage.setItem(SELECTED_GROUP_KEY, JSON.stringify({
+      const user = sessionUser;
+
+      const channelData = {
         collegeId: selectedCollege?.id || null,
         categoryId: selectedCategory?.id || null,
         channel: { id: selectedChannel.id, name: selectedChannel.name, icon: selectedChannel.icon },
-      }));
+      };
+
+      await AsyncStorage.setItem(SELECTED_GROUP_KEY, JSON.stringify(channelData));
       await AsyncStorage.setItem(ONBOARDING_DONE_KEY, 'true');
-      onComplete(selectedChannel);
-    } catch (_) { onComplete(selectedChannel); }
+      
+      // SYNC TO DATABASE
+      if (user?.id) {
+        await axios.post(`${BACKEND_URL}/api/profiles`, {
+          userId: user.id,
+          selectedChannelId: selectedChannel.id
+        });
+      }
+
+      onComplete(channelData);
+    } catch (err) {
+      console.error('[ONBOARDING] Error saving selection:', err);
+      // Even if saving to DB fails, we still want to complete onboarding locally
+      onComplete(channelData); 
+    }
   };
 
   const handleSelectCollege = async (college) => {
@@ -61,7 +89,7 @@ export default function OnboardingScreen({ onComplete }) {
       .single();
 
     if (error || !channelData) {
-      Alert.alert('No College Chat', 'This college doesn\'t have a general chat room yet. Ask your admin.');
+      showAlert('No College Chat', 'This college doesn\'t have a general chat room yet. Ask your admin.', 'error');
       return;
     }
 
@@ -287,6 +315,14 @@ export default function OnboardingScreen({ onComplete }) {
       {step === 2 && renderPickCollege()}
       {step === 3 && renderPickCategory()}
       {step === 4 && renderPickClass()}
+
+      <CustomAlert 
+        visible={alert.visible}
+        title={alert.title}
+        message={alert.message}
+        type={alert.type}
+        onClose={() => setAlert({ ...alert, visible: false })}
+      />
     </View>
   );
 }

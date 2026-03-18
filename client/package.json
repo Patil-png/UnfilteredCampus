@@ -20,6 +20,7 @@
     "axios": "^1.13.6",
     "expo": "~54.0.33",
     "expo-application": "~7.0.8",
+    "expo-blur": "^55.0.10",
     "expo-checkbox": "~5.0.8",
     "expo-constants": "~18.0.13",
     "expo-crypto": "^55.0.9",

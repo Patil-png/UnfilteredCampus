@@ -14,7 +14,7 @@ function generateAnonymousId(realUserId) {
   }
   
   return crypto.createHmac('sha256', secretSalt)
-               .update(realUserId)
+               .update(String(realUserId))
                .digest('hex');
 }
 

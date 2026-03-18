@@ -4,6 +4,7 @@ const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const { deepClean } = require('./utils/moderation'); // Advanced Heuristic Filter
 const { generateAnonymousId } = require('./utils/crypto');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -29,19 +30,20 @@ app.post('/api/auth/mask', async (req, res) => {
     const maskId = generateAnonymousId(userId);
     console.log(`[BACKEND] Generated Mask ID: ${maskId}`);
 
-    // Check if user is banned
-    const { data: banData, error: banError } = await supabaseAdmin
+    // Check if user is banned (with fast fallback)
+    const banCheck = supabaseAdmin
       .from('banned_hashes')
-      .select('*')
+      .select('hash_id')
       .eq('hash_id', maskId)
-      .single();
+      .maybeSingle();
 
-    if (banError && banError.code !== 'PGRST116') {
-      console.warn(`[BACKEND] Warning: Check if 'banned_hashes' table exists. Error: ${banError.message}`);
-      // We continue anyway so the app can function even if banning system isn't fully set up yet
-    }
+    // Use a promise race or just a short timeout for the security check
+    const banResult = await Promise.race([
+      banCheck,
+      new Promise((resolve) => setTimeout(() => resolve({ error: { message: 'timeout' } }), 2000))
+    ]);
 
-    if (banData) {
+    if (banResult.data) {
       console.log(`[BACKEND] USER IS BANNED: ${maskId}`);
       return res.status(403).json({ banned: true, message: 'Your account has been permanently banned.' });
     }
@@ -49,6 +51,142 @@ app.post('/api/auth/mask', async (req, res) => {
     res.json({ maskId });
   } catch (error) {
     console.error('[BACKEND] CRITICAL Masking error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 0. CUSTOM AUTH SYSTEM (No Email / No Rate Limit)
+app.post('/api/auth/register', async (req, res) => {
+  const { username, password } = req.body;
+  
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Name and password are required' });
+  }
+
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    const { data, error } = await supabaseAdmin
+      .from('user_accounts')
+      .insert([{ username, password_hash: hashedPassword }])
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(400).json({ error: 'This name is already taken. Try another!' });
+      }
+      throw error;
+    }
+
+    // AUTO-INITIALIZE PROFILE
+    const maskId = generateAnonymousId(data.id);
+    await supabaseAdmin
+      .from('profiles')
+      .upsert({ 
+        mask_id: maskId, 
+        nickname: username,
+        last_seen: new Date().toISOString()
+      }, { onConflict: 'mask_id' });
+
+    console.log(`\n[✨ AUTH] New Registration SUCCESS:`);
+    console.log(`   - Username: ${username}`);
+    console.log(`   - Internal ID: ${data.id}`);
+    console.log(`   - Ghost (Mask) ID: ${maskId}\n`);
+
+    res.status(201).json({ user: data, maskId });
+  } catch (err) {
+    console.error('[AUTH] Registration error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+  
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Name and password are required' });
+  }
+
+  try {
+    const { data: user, error } = await supabaseAdmin
+      .from('user_accounts')
+      .select('*')
+      .eq('username', username)
+      .single();
+
+    if (error || !user) {
+      return res.status(401).json({ error: 'Invalid name or password' });
+    }
+
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Invalid name or password' });
+    }
+
+    // SYNC PROFILE ON LOGIN
+    const maskId = generateAnonymousId(user.id);
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .upsert({ 
+        mask_id: maskId, 
+        last_seen: new Date().toISOString()
+      }, { onConflict: 'mask_id' })
+      .select('*, selected_channel:channels(name)')
+      .single();
+
+    const currentChat = profile?.selected_channel ? profile.selected_channel.name : 'None (Full Discovery)';
+
+    console.log(`\n[🔑 AUTH] Login SUCCESS:`);
+    console.log(`   - User: ${username}`);
+    console.log(`   - Ghost ID: ${maskId}`);
+    console.log(`   - Primary Class: ${currentChat}\n`);
+
+    res.json({ user, maskId });
+  } catch (err) {
+    console.error('[AUTH] Login error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/auth/delete', async (req, res) => {
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: 'User ID is required' });
+
+  try {
+    const maskId = generateAnonymousId(userId);
+
+    console.log(`\n[🛡️ AUTH] Account Deletion INITIATED:`);
+    console.log(`   - User ID: ${userId}`);
+    console.log(`   - Associated Ghost ID: ${maskId}`);
+
+    // 1. Delete user account
+    const { error: accError, count: accCount } = await supabaseAdmin
+      .from('user_accounts')
+      .delete({ count: 'exact' })
+      .eq('id', userId);
+    
+    if (accError) throw accError;
+    console.log(`   - Accounts scrubbed: ${accCount || 0}`);
+
+    // 2. Delete profile (anonymized data)
+    const { count: profCount } = await supabaseAdmin
+      .from('profiles')
+      .delete({ count: 'exact' })
+      .eq('mask_id', maskId);
+    console.log(`   - Profiles scrubbed: ${profCount || 0}`);
+
+    // 3. Messages remain but are now truly orphaned (no profile/nickname)
+    const { count: msgCount } = await supabaseAdmin
+      .from('messages')
+      .delete({ count: 'exact' })
+      .eq('sender_id', maskId);
+    console.log(`   - Messages scrubbed: ${msgCount || 0}`);
+
+    console.log(`[🛡️ AUTH] Deletion COMPLETE\n`);
+    res.json({ success: true, message: 'Account and associated data deleted permanently.' });
+  } catch (error) {
+    console.error('[AUTH] Delete error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -192,11 +330,14 @@ app.get('/ping', (req, res) => {
 // Route to get a profile
 app.get('/api/profiles/:maskId', async (req, res) => {
   const { maskId } = req.params;
+  if (!maskId || maskId === 'undefined' || maskId === 'null') {
+    return res.status(400).json({ error: 'Valid Ghost ID is required' });
+  }
 
   try {
     const { data, error } = await supabaseAdmin
       .from('profiles')
-      .select('*')
+      .select('*, selected_channel:selected_channel_id(id, name, icon, college_id, category_id, categories(college_id))')
       .eq('mask_id', maskId)
       .single();
 
@@ -220,6 +361,7 @@ app.post('/api/profiles', async (req, res) => {
 
   try {
     const maskId = generateAnonymousId(userId);
+    const channelId = req.body.selectedChannelId;
 
     const { data, error } = await supabaseAdmin
       .from('profiles')
@@ -227,12 +369,18 @@ app.post('/api/profiles', async (req, res) => {
         mask_id: maskId,
         nickname: nickname,
         avatar_url: avatarUrl,
+        selected_channel_id: channelId,
         updated_at: new Date()
       })
-      .select()
+      .select('*, selected_channel:channels(name)')
       .single();
 
     if (error) throw error;
+
+    const chatName = data.selected_channel ? data.selected_channel.name : 'Cleared';
+    console.log(`\n[📝 PROFILE] Selection Updated:`);
+    console.log(`   - Ghost ID: ${maskId}`);
+    console.log(`   - Action: Joining "${chatName}"\n`);
 
     res.json(data);
   } catch (error) {

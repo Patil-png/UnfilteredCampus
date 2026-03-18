@@ -3,42 +3,43 @@ import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert,
 import { supabase } from '../supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
+import CustomAlert from '../components/CustomAlert';
 
 // Fallback for reading device id directly
 // Stable identity: Prefer Supabase user.id, fallback to device storage if needed
-const getStableIdentity = async (user) => {
-  if (user?.id) return user.id;
-  try {
-    const id = await AsyncStorage.getItem('@unfiltered_device_id');
-    return id || 'unknown_user';
-  } catch (e) {
-    return 'unknown_user';
-  }
-};
-
-const SELECTED_GROUP_KEY = '@unfiltered_selected_group';
-const ONBOARDING_DONE_KEY = '@unfiltered_onboarding_done';
+const SELECTED_GROUP_KEY = '@campus_selected_group';
+const ONBOARDING_DONE_KEY = '@campus_onboarding_done';
+const USER_SESSION_KEY = '@campus_user_session';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.243:5000';
 
-export default function ProfileScreen({ user, onBack, onGroupChanged }) {
-  const [nickname, setNickname] = useState('');
-  const [maskId, setMaskId] = useState('');
-  
+export default function ProfileScreen({ user, maskId: propMaskId, onBack, onGroupChanged, onDeleteAccount, onLogout }) {
+  const [maskId, setMaskId] = useState(propMaskId || '');
+
   // Navigation State
   const [step, setStep] = useState(1); // 1: Profile View, 2: Pick College, 3: Pick Category, 4: Pick Class
-  
+
   // Selected State
   const [savedChannel, setSavedChannel] = useState(null);
   const [selectedCollege, setSelectedCollege] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [selectedChannel, setSelectedChannel] = useState(null);
-  
+
+  // Custom Alert State
+  const [alert, setAlert] = useState({ 
+    visible: false, title: '', message: '', type: 'info', 
+    onConfirm: null, confirmText: 'OK', cancelText: 'Cancel' 
+  });
+
+  const showAlert = (title, message, type = 'info', onConfirm = null, confirmText = 'OK', cancelText = 'Cancel') => {
+    setAlert({ visible: true, title, message, type, onConfirm, confirmText, cancelText });
+  };
+
   // Data State
   const [colleges, setColleges] = useState([]);
   const [categories, setCategories] = useState([]);
   const [channels, setChannels] = useState([]);
-  
+
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
 
@@ -48,7 +49,7 @@ export default function ProfileScreen({ user, onBack, onGroupChanged }) {
 
   const loadProfileAndData = async () => {
     try {
-      const identity = await getStableIdentity(user);
+      const identity = propMaskId || user.id; // Fallback to id if maskId missing
       const [profRes, collRes, catRes, chanRes, storedGroup] = await Promise.all([
         axios.get(`${BACKEND_URL}/api/profiles/${identity}`).catch(() => ({ data: null })),
         supabase.from('colleges').select('*').order('name'),
@@ -57,8 +58,8 @@ export default function ProfileScreen({ user, onBack, onGroupChanged }) {
         AsyncStorage.getItem(SELECTED_GROUP_KEY)
       ]);
 
+      // Only metadata now
       if (profRes.data) {
-        setNickname(profRes.data.nickname || '');
         setMaskId(profRes.data.mask_id || '');
       }
 
@@ -71,7 +72,7 @@ export default function ProfileScreen({ user, onBack, onGroupChanged }) {
         if (parsed?.channel) {
           setSavedChannel(parsed.channel);
           setSelectedChannel(parsed.channel);
-          
+
           // Pre-populate selections for editing
           if (parsed.collegeId) {
             const c = (collRes.data || []).find(x => x.id === parsed.collegeId);
@@ -84,35 +85,25 @@ export default function ProfileScreen({ user, onBack, onGroupChanged }) {
         }
       }
     } catch (err) {
-      console.warn('Profile load error:', err);
+      console.warn('[PROFILE] Init error:', err);
+      showAlert('Error', 'Failed to load profile data.', 'error');
     } finally {
       setFetching(false);
     }
   };
 
-  const saveProfile = async () => {
-    if (!nickname.trim()) return Alert.alert('Required', 'Please enter a nickname.');
-    setLoading(true);
-    try {
-      const identity = await getStableIdentity(user);
-      await axios.post(`${BACKEND_URL}/api/profiles`, { userId: identity, nickname: nickname.trim(), avatarUrl: '' });
-      Alert.alert('✅ Saved!', 'Your nickname has been updated.');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to update profile');
-    } finally { setLoading(false); }
-  };
-
   const handleLogout = async () => {
     await AsyncStorage.removeItem(SELECTED_GROUP_KEY);
     await AsyncStorage.removeItem(ONBOARDING_DONE_KEY);
-    await supabase.auth.signOut();
+    await AsyncStorage.removeItem(USER_SESSION_KEY);
+    if (onLogout) onLogout(); // Trigger App-level logout and redirection
   };
 
   // --- Change Class Flow ---
   const handleSelectCollege = async (college) => {
     const { data: channelData, error } = await supabase.from('channels').select('*').eq('college_id', college.id).eq('status', 'active').single();
     if (error || !channelData) {
-      Alert.alert('No College Chat', 'This college doesn\'t have a general chat room yet.');
+      showAlert('No College Chat', 'This college doesn\'t have a general chat room yet.', 'info');
       return;
     }
     setSelectedCollege({
@@ -122,20 +113,58 @@ export default function ProfileScreen({ user, onBack, onGroupChanged }) {
     setStep(3);
   };
 
-  const saveNewClass = async () => {
-    if (!selectedChannel) return;
+  const handleFinish = async () => {
+    if (!selectedChannel) { showAlert('Required', 'Please select a class to continue.', 'info'); return; }
+    setLoading(true);
     try {
-      const payload = {
-        collegeId: selectedCollege ? selectedCollege.id : null,
-        categoryId: selectedCategory ? selectedCategory.id : null,
-        channel: selectedChannel,
+      const channelData = {
+        collegeId: selectedCollege?.id || null,
+        categoryId: selectedCategory?.id || null,
+        channel: { id: selectedChannel.id, name: selectedChannel.name, icon: selectedChannel.icon },
       };
-      await AsyncStorage.setItem(SELECTED_GROUP_KEY, JSON.stringify(payload));
+
+      await AsyncStorage.setItem(SELECTED_GROUP_KEY, JSON.stringify(channelData));
+      
+      // SYNC TO DATABASE
+      if (user?.id) {
+        await axios.post(`${BACKEND_URL}/api/profiles`, {
+          userId: user.id,
+          selectedChannelId: selectedChannel.id
+        });
+      }
+
+      onGroupChanged(selectedChannel);
       setSavedChannel(selectedChannel);
-      if (onGroupChanged) onGroupChanged(selectedChannel);
-      Alert.alert('Class Changed', `You are now in ${selectedChannel.name}`);
-      setStep(1); // Go back to profile
-    } catch (e) { Alert.alert('Error', 'Could not save class'); }
+      setStep(1); // Go back to profile view
+      showAlert('Success', 'Your campus class has been updated!', 'success');
+    } catch (err) {
+      showAlert('Error', 'Failed to save changes.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmDeleteAccount = () => {
+    showAlert(
+      'Delete Account?',
+      'This will permanently delete your identity, messages, and settings. This cannot be undone.',
+      'confirm',
+      async () => {
+        setAlert(prev => ({ ...prev, visible: false }));
+        try {
+          await onDeleteAccount(); 
+          // Show success on Profile screen BEFORE session wipe
+          showAlert('Account Deleted', 'Your account and data have been permanently removed.', 'success', () => {
+            setAlert(prev => ({ ...prev, visible: false }));
+            onLogout(true); // Final logout and redirect to signup
+          });
+        } catch (e) {
+          showAlert('Error', 'Failed to delete account.', 'error');
+        }
+      },
+      'DELETE',
+      'CANCEL'
+    );
   };
 
   if (fetching) {
@@ -224,52 +253,64 @@ export default function ProfileScreen({ user, onBack, onGroupChanged }) {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8F9FA" />
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={onBack}><Text style={styles.backText}>← Back</Text></TouchableOpacity>
-        <Text style={styles.headerTitle}>My Profile</Text>
-        <View style={{ width: 60 }} />
-      </View>
-
-      {/* Identity Banner */}
-      <View style={styles.identityBanner}>
-        <View style={styles.avatarCircle}><Text style={styles.avatarEmoji}>👤</Text></View>
-        <Text style={styles.identityName}>{nickname || 'Anonymous Student'}</Text>
-        <View style={styles.maskIdPill}><Text style={styles.maskIdLabel}>GHOST ID  </Text><Text style={styles.maskIdValue}>{maskId?.substring(0, 14) || '—'}</Text></View>
-        <Text style={styles.identityHint}>Fully anonymous · Cannot be traced</Text>
-      </View>
-
-      {/* Active College Badge */}
-      {savedChannel && (
-        <View style={styles.activeCard}>
-          <View style={styles.activeLeft}>
-            <View style={styles.activeIcon}><Text style={styles.activeEmoji}>{savedChannel.icon || '🏛️'}</Text></View>
-            <View>
-              <Text style={styles.activeLabel}>CURRENT CLASS</Text>
-              <Text style={styles.activeName}>{savedChannel.name}</Text>
+    <View style={{ flex: 1 }}>
+      <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F8F9FA" />
+        {/* Header */}
+            <View style={styles.header}>
+              <TouchableOpacity onPress={onBack} style={styles.headerActionBtn}>
+                <Text style={styles.headerActionText}>✕</Text>
+              </TouchableOpacity>
+              <Text style={styles.headerTitle}>Profile</Text>
+              <TouchableOpacity onPress={confirmDeleteAccount} style={styles.deleteAccountBtn}>
+                <Text style={styles.deleteAccountText}>Delete</Text>
+              </TouchableOpacity>
             </View>
+
+        {/* Identity Banner */}
+        <View style={styles.identityBanner}>
+          <View style={styles.avatarCircle}><Text style={styles.avatarEmoji}>👤</Text></View>
+          <Text style={styles.identityName}>{user?.username || 'Student'}</Text>
+          <View style={styles.maskIdPill}>
+            <Text style={styles.maskIdLabel}>GHOST ID  </Text>
+            <Text style={styles.maskIdValue}>{maskId?.substring(0, 14) || '—'}</Text>
           </View>
-          <TouchableOpacity onPress={() => setStep(2)} style={styles.changeBtn}><Text style={styles.changeBtnText}>Change</Text></TouchableOpacity>
+          <Text style={styles.identityHint}>Fully anonymous · Cannot be traced</Text>
         </View>
-      )}
 
-      {/* Nickname */}
-      <View style={styles.section}>
-        <Text style={styles.sectionLabel}>CAMPUS NICKNAME</Text>
-        <TextInput style={styles.input} placeholder="e.g. CampusGhost" placeholderTextColor="#9CA3AF" value={nickname} onChangeText={setNickname} maxLength={20} />
-        <Text style={styles.hint}>Visible to others in chat — still anonymous.</Text>
-      </View>
+        {/* Active College Badge */}
+        {savedChannel && (
+          <View style={styles.activeCard}>
+            <View style={styles.activeLeft}>
+              <View style={styles.activeIcon}><Text style={styles.activeEmoji}>{savedChannel.icon || '🏛️'}</Text></View>
+              <View>
+                <Text style={styles.activeLabel}>CURRENT CLASS</Text>
+                <Text style={styles.activeName}>{savedChannel.name}</Text>
+              </View>
+            </View>
+            <TouchableOpacity onPress={() => setStep(2)} style={styles.changeBtn}><Text style={styles.changeBtnText}>Change</Text></TouchableOpacity>
+          </View>
+        )}
 
-      {/* Save & Logout */}
-      <View style={{ paddingHorizontal: 20, marginTop: 28 }}>
-        <TouchableOpacity style={styles.saveBtn} onPress={saveProfile} disabled={loading}>
-          {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Save Nickname</Text>}
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}><Text style={styles.logoutText}>Sign Out</Text></TouchableOpacity>
-      </View>
-    </ScrollView>
+        {/* Sign Out */}
+        <View style={{ paddingHorizontal: 20, marginTop: 10 }}>
+          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+            <Text style={styles.logoutText}>Sign Out Account</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+
+      <CustomAlert 
+        visible={alert.visible}
+        title={alert.title}
+        message={alert.message}
+        type={alert.type}
+        onClose={() => setAlert({ ...alert, visible: false })}
+        onConfirm={alert.onConfirm}
+        confirmText={alert.confirmText}
+        cancelText={alert.cancelText}
+      />
+    </View>
   );
 }
 
@@ -289,7 +330,8 @@ const styles = StyleSheet.create({
   identityBanner: { backgroundColor: '#6366F1', margin: 20, borderRadius: 24, padding: 26, alignItems: 'center', shadowColor: '#6366F1', shadowOpacity: 0.3, shadowRadius: 16, elevation: 8 },
   avatarCircle: { width: 66, height: 66, borderRadius: 33, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
   avatarEmoji: { fontSize: 32 },
-  identityName: { fontSize: 24, fontWeight: '900', color: '#FFF', marginBottom: 12, letterSpacing: -0.5 },
+  identityName: { fontSize: 24, fontWeight: '900', color: '#FFF', marginBottom: 2, letterSpacing: -0.5 },
+  accountHandle: { fontSize: 13, fontWeight: '600', color: 'rgba(255,255,255,0.7)', marginBottom: 10, letterSpacing: 0.5 },
   maskIdPill: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, marginBottom: 12 },
   maskIdLabel: { fontSize: 9, fontWeight: '900', color: 'rgba(255,255,255,0.8)', letterSpacing: 1 },
   maskIdValue: { fontSize: 11, fontWeight: '700', color: '#FFF' },
@@ -320,7 +362,7 @@ const styles = StyleSheet.create({
   backBtnText: { fontSize: 15, color: '#6366F1', fontWeight: '800' },
   stepHeading: { fontSize: 26, fontWeight: '900', color: '#111827', marginBottom: 6 },
   stepSub: { fontSize: 15, color: '#6B7280', fontWeight: '500', marginBottom: 20 },
-  
+
   optionCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 16, padding: 14, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 6, elevation: 1, borderWidth: 1.5, borderColor: 'transparent' },
   optionCardSelected: { borderColor: '#6366F1', backgroundColor: '#EEF2FF' },
   optionIconBox: { width: 44, height: 44, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginRight: 14 },
@@ -330,7 +372,12 @@ const styles = StyleSheet.create({
   chevron: { color: '#9CA3AF', fontSize: 18, fontWeight: '600' },
   checkBox: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#6366F1', justifyContent: 'center', alignItems: 'center' },
   checkMark: { color: '#FFF', fontSize: 14, fontWeight: '900' },
-  
+
   finishBtn: { backgroundColor: '#6366F1', borderRadius: 18, paddingVertical: 18, alignItems: 'center', marginTop: 20, shadowColor: '#6366F1', shadowOpacity: 0.3, shadowRadius: 12, elevation: 5 },
   finishBtnText: { color: '#FFF', fontSize: 16, fontWeight: '900' },
+
+  headerActionBtn: { padding: 8, borderRadius: 12, backgroundColor: '#F3F4F6' },
+  headerActionText: { fontSize: 16, color: '#111827', fontWeight: '800' },
+  deleteAccountBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: '#FEE2E2' },
+  deleteAccountText: { color: '#EF4444', fontSize: 13, fontWeight: '900' },
 });

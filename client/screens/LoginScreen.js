@@ -2,78 +2,61 @@ import React, { useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Alert,
   ActivityIndicator, Dimensions, StatusBar, SafeAreaView, TextInput,
-  KeyboardAvoidingView, Platform
+  KeyboardAvoidingView, Platform, ScrollView
 } from 'react-native';
 import { supabase } from '../supabaseClient';
 import Checkbox from 'expo-checkbox';
 import axios from 'axios';
+import CustomAlert from '../components/CustomAlert';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.243:5000';
 
 const { width, height } = Dimensions.get('window');
 
-export default function LoginScreen({ onLoginSuccess }) {
+export default function LoginScreen({ onLoginSuccess, initialMode = 'signup' }) {
   const [loading, setLoading] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [isLogin, setIsLogin] = useState(false); // Default to Sign Up for new users
+  const [isLogin, setIsLogin] = useState(initialMode === 'login');
+
+  React.useEffect(() => {
+    setIsLogin(initialMode === 'login');
+  }, [initialMode]);
+
+  // Custom Alert State
+  const [alert, setAlert] = useState({ visible: false, title: '', message: '', type: 'info' });
+
+  const showAlert = (title, message, type = 'info') => {
+    setAlert({ visible: true, title, message, type });
+  };
 
   const handleAuthAction = async () => {
     if (!username.trim() || !password.trim()) {
-      Alert.alert('Required', 'Please enter both an anonymous name and a password.');
+      showAlert('Required', 'Please enter both an anonymous name and a password.', 'info');
       return;
     }
     if (!agreed) {
-      Alert.alert('Required', 'Please accept the community guidelines to continue.');
+      showAlert('Required', 'Please accept the community guidelines to continue.', 'info');
       return;
     }
 
     setLoading(true);
-    const email = `${username.trim().toLowerCase()}@unfiltered.campus`;
 
     try {
-      if (isLogin) {
-        // LOGIN FLOW
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (error) throw error;
-        if (data.session) onLoginSuccess(data.session.user);
-      } else {
-        // SIGN UP FLOW
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: {
-              display_name: username.trim(),
-            }
-          }
-        });
-        if (error) throw error;
-        if (data.session) {
-          // Initialize profile with the chosen name
-          try {
-            await axios.post(`${BACKEND_URL}/api/profiles`, { 
-              userId: data.session.user.id, 
-              nickname: username.trim(), 
-              avatarUrl: '' 
-            });
-          } catch (pe) {
-            console.warn('Profile initialization failed:', pe.message);
-          }
-          onLoginSuccess(data.session.user);
-        } else {
-          // If auto-confirm is off, we might just try to log them in immediately or show a message
-          // but for this app we assume auto-confirm is ON.
-          Alert.alert('Success', 'Account created! Please login.');
-          setIsLogin(true);
-        }
+      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
+      const response = await axios.post(`${BACKEND_URL}${endpoint}`, {
+        username: username.trim(),
+        password: password.trim(),
+      });
+
+      if (response.data.user) {
+        // Success! Pass the user object and maskId to App.js
+        onLoginSuccess(response.data.user, isLogin, response.data.maskId);
       }
     } catch (error) {
-      Alert.alert('Auth Error', error.message);
+      const msg = error.response?.data?.error || error.message;
+      showAlert('Auth Error', msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -83,50 +66,65 @@ export default function LoginScreen({ onLoginSuccess }) {
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FAFAFA" />
 
-      {/* Decorative orbs */}
-      <View style={styles.orbTopRight} />
-      <View style={styles.orbBottomLeft} />
+      {/* Dynamic Decorative orbs */}
+      <View style={[styles.orbTopRight, isLogin ? { backgroundColor: '#F0FDF4' } : { backgroundColor: '#EEF2FF' }]} />
+      <View style={[styles.orbBottomLeft, isLogin ? { backgroundColor: '#F1F5F9' } : { backgroundColor: '#FFF7ED' }]} />
 
       <SafeAreaView style={styles.safe}>
-        <View style={styles.content}>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+          style={{ flex: 1 }}
+        >
+          <ScrollView 
+            contentContainerStyle={styles.scrollContent} 
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.content}>
 
-          {/* Beta Badge */}
-          <View style={styles.betaBadge}>
-            <Text style={styles.betaText}>✦ BETA</Text>
+          {/* Meta Badge */}
+          <View style={[styles.betaBadge, isLogin && { backgroundColor: '#10B981' }]}>
+            <Text style={styles.betaText}>{isLogin ? '✦ SECURE LOGIN' : '✦ JOIN CAMPUS'}</Text>
           </View>
 
           {/* Hero */}
-          <View style={styles.logoWrap}>
-            <Text style={styles.logoEmoji}>🎓</Text>
+          <View style={[styles.logoWrap, isLogin && { borderColor: '#E5E7EB', backgroundColor: '#F8FAFC' }]}>
+            <Text style={styles.logoEmoji}>{isLogin ? '🔑' : '🎓'}</Text>
           </View>
-          <Text style={styles.appName}>Unfiltered</Text>
-          <Text style={styles.tagline}>Campus Community Hub</Text>
+          <Text style={styles.appName}>{isLogin ? 'Welcome Back' : 'Unfiltered'}</Text>
+          <Text style={styles.tagline}>
+            {isLogin ? 'Sign in to your anonymous account' : 'Join the campus community hub'}
+          </Text>
 
-          {/* Value Props */}
-          <View style={styles.pillsRow}>
-            {['Anonymous', 'Safe', 'Real Talk'].map((tag, i) => (
-              <View key={i} style={[styles.pill, i === 2 && styles.pillAccent]}>
-                <Text style={[styles.pillText, i === 2 && styles.pillTextAccent]}>{tag}</Text>
-              </View>
-            ))}
-          </View>
-
-          {/* Feature Cards */}
-          <View style={styles.featureCards}>
-            {[
-              { emoji: '🛡️', title: 'Stay Hidden', desc: 'Your identity is never stored or revealed' },
-              { emoji: '🏛️', title: 'Your Campus', desc: 'Find your class and join the conversation' },
-              { emoji: '💬', title: 'Speak Freely', desc: 'No consequences. Just honest campus talk' },
-            ].map((f, i) => (
-              <View key={i} style={styles.featureRow}>
-                <View style={styles.featureIconBox}><Text style={styles.featureEmoji}>{f.emoji}</Text></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.featureTitle}>{f.title}</Text>
-                  <Text style={styles.featureDesc}>{f.desc}</Text>
+          {/* Value Props - ONLY FOR SIGNUP */}
+          {!isLogin && (
+            <View style={styles.pillsRow}>
+              {['Anonymous', 'Safe', 'Real Talk'].map((tag, i) => (
+                <View key={i} style={[styles.pill, i === 2 && styles.pillAccent]}>
+                  <Text style={[styles.pillText, i === 2 && styles.pillTextAccent]}>{tag}</Text>
                 </View>
-              </View>
-            ))}
-          </View>
+              ))}
+            </View>
+          )}
+
+          {/* Feature Cards - ONLY FOR SIGNUP */}
+          {!isLogin && (
+            <View style={styles.featureCards}>
+              {[
+                { emoji: '🛡️', title: 'Stay Hidden', desc: 'Your identity is never stored or revealed' },
+                { emoji: '🏛️', title: 'Your Campus', desc: 'Find your class and join the conversation' },
+                { emoji: '💬', title: 'Speak Freely', desc: 'No consequences. Just honest campus talk' },
+              ].map((f, i) => (
+                <View key={i} style={styles.featureRow}>
+                  <View style={styles.featureIconBox}><Text style={styles.featureEmoji}>{f.emoji}</Text></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.featureTitle}>{f.title}</Text>
+                    <Text style={styles.featureDesc}>{f.desc}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
 
           {/* Auth Form */}
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -144,9 +142,9 @@ export default function LoginScreen({ onLoginSuccess }) {
               </View>
 
               <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>PASSWORD</Text>
+                <Text style={[styles.inputLabel, isLogin && { color: '#10B981' }]}>PASSWORD</Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, isLogin && { borderColor: '#D1FAE5' }]}
                   placeholder="••••••••"
                   placeholderTextColor="#9CA3AF"
                   value={password}
@@ -157,30 +155,37 @@ export default function LoginScreen({ onLoginSuccess }) {
             </View>
           </KeyboardAvoidingView>
 
-          {/* Consent */}
-          <TouchableOpacity
-            style={styles.consentRow}
-            onPress={() => setAgreed(!agreed)}
-            activeOpacity={0.7}
-          >
-            <Checkbox
-              style={styles.checkbox}
-              value={agreed}
-              onValueChange={setAgreed}
-              color={agreed ? '#6366F1' : undefined}
-            />
-            <Text style={styles.consentText}>
-              I agree to the{' '}
-              <Text style={styles.consentLink}>Community Guidelines</Text>
-              {' '}and will be respectful.
-            </Text>
-          </TouchableOpacity>
+          {/* Consent - ONLY FOR SIGNUP */}
+          {!isLogin && (
+            <TouchableOpacity
+              style={styles.consentRow}
+              onPress={() => setAgreed(!agreed)}
+              activeOpacity={0.7}
+            >
+              <Checkbox
+                style={styles.checkbox}
+                value={agreed}
+                onValueChange={setAgreed}
+                color={agreed ? '#6366F1' : undefined}
+              />
+              <Text style={styles.consentText}>
+                I agree to the{' '}
+                <Text style={styles.consentLink}>Community Guidelines</Text>
+                {' '}and will be respectful.
+              </Text>
+            </TouchableOpacity>
+          )}
 
           {/* CTA */}
           <TouchableOpacity
-            style={[styles.ctaBtn, (!agreed || !username || !password) && styles.ctaBtnDisabled]}
+            style={[
+              styles.ctaBtn, 
+              isLogin ? { backgroundColor: '#111827' } : { backgroundColor: '#6366F1' },
+              (!isLogin && (!agreed || !username || !password)) && styles.ctaBtnDisabled,
+              (isLogin && (!username || !password)) && styles.ctaBtnDisabled,
+            ]}
             onPress={handleAuthAction}
-            disabled={loading || !agreed}
+            disabled={loading || (!isLogin && !agreed)}
             activeOpacity={0.9}
           >
             {loading ? (
@@ -188,7 +193,7 @@ export default function LoginScreen({ onLoginSuccess }) {
             ) : (
               <>
                 <Text style={styles.ctaBtnText}>
-                  {isLogin ? 'Enter Campus' : 'Create & Enter'}
+                  {isLogin ? 'Sign In' : 'Create & Enter'}
                 </Text>
                 <Text style={styles.ctaBtnArrow}>→</Text>
               </>
@@ -205,12 +210,22 @@ export default function LoginScreen({ onLoginSuccess }) {
             </Text>
           </TouchableOpacity>
 
-        </View>
+            </View>
 
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>SECURE • ENCRYPTED • ANONYMOUS</Text>
-        </View>
+            <View style={styles.footer}>
+              <Text style={styles.footerText}>SECURE • ENCRYPTED • ANONYMOUS</Text>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
+
+      <CustomAlert 
+        visible={alert.visible}
+        title={alert.title}
+        message={alert.message}
+        type={alert.type}
+        onClose={() => setAlert({ ...alert, visible: false })}
+      />
     </View>
   );
 }
@@ -231,7 +246,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF7ED',
   },
 
-  content: { flex: 1, paddingHorizontal: 28, paddingTop: 52, justifyContent: 'center' },
+  content: { paddingHorizontal: 28, paddingTop: 32, paddingBottom: 40 },
+  scrollContent: { flexGrow: 1, justifyContent: 'center' },
 
   betaBadge: {
     backgroundColor: '#6366F1', alignSelf: 'flex-start',
@@ -239,11 +255,13 @@ const styles = StyleSheet.create({
   },
   betaText: { fontSize: 10, fontWeight: '900', color: '#FFF', letterSpacing: 2 },
 
+  loginHeader: { fontSize: 32, color: '#111827' },
+
   logoWrap: {
-    width: 80, height: 80, borderRadius: 24,
+    width: 80, height: 80, borderRadius: 28,
     backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center',
-    marginBottom: 16, borderWidth: 2, borderColor: '#C7D2FE',
-    shadowColor: '#6366F1', shadowOpacity: 0.15, shadowRadius: 12, elevation: 4,
+    marginBottom: 20, borderWidth: 2, borderColor: '#C7D2FE',
+    shadowColor: '#6366F1', shadowOpacity: 0.15, shadowRadius: 15, elevation: 4,
   },
   logoEmoji: { fontSize: 38 },
 
