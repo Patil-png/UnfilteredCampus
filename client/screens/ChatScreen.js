@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, FlatList, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActionSheetIOS, StatusBar, Modal, ScrollView, Animated, PanResponder, Dimensions } from 'react-native';
+import { View, Text, TextInput, FlatList, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActionSheetIOS, StatusBar, Modal, ScrollView, Animated, PanResponder, Dimensions, ActivityIndicator, Clipboard } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import axios from 'axios';
 import * as Application from 'expo-application';
@@ -18,7 +18,10 @@ const EMOJI_SECTIONS = [
   { title: 'CAMPUS LIFE', emojis: ['🎓', '🏫', '📚', '📖', '📝', '✏️', '💻', '🖥️', '🏢', '🎒', '🎽', '👟', '🍕', '🍔', '🍟', '🍦', '🍩', '🍺', '🍻', '🥂', '🍷', '🍹', '☕', '🥤', '🎮', '🎵', '🎤', '🎧', '🎸'] }
 ];
 
-export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
+export default function ChatScreen({ user, channel: propChannel, onOpenProfile, onBack }) {
+  // 🛡️ Handle BOTH raw channel objects AND wrapped context objects { collegeId, channel }
+  const channel = propChannel?.channel || propChannel;
+
   const [messages, setMessages] = useState([]);
   const [content, setContent] = useState('');
   const [maskId, setMaskId] = useState(null);
@@ -32,6 +35,47 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
   const [newPollQuestion, setNewPollQuestion] = useState('');
   const [newPollOptions, setNewPollOptions] = useState(['', '']);
   const [replyingTo, setReplyingTo] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const [isInvitingUser, setIsInvitingUser] = useState(false);
+  const [inviteUsername, setInviteUsername] = useState('');
+  const [invitingLoading, setInvitingLoading] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+
+  // 🔎 User Search Logic
+  useEffect(() => {
+    if (isInvitingUser && inviteUsername.length >= 2) {
+      const delayDebounceFn = setTimeout(async () => {
+        try {
+          const { data } = await axios.get(`${BACKEND_URL}/api/users/search?q=${inviteUsername}`);
+          setSearchResults(data);
+        } catch (err) {
+          console.warn('Search error:', err);
+        }
+      }, 300);
+      return () => clearTimeout(delayDebounceFn);
+    } else {
+      setSearchResults([]);
+    }
+  }, [inviteUsername, isInvitingUser]);
+
+  // 📨 WhatsApp-level enhancements
+  const flatListRef = useRef(null);              // For auto-scroll
+  const pageRef = useRef(0);                     // Current page (ref = no re-render)
+  const isLoadingMoreRef = useRef(false);        // Synchronous guard — prevents loop
+  const hasMoreRef = useRef(true);               // Synchronous guard — stops at last page
+  const [loadingMore, setLoadingMore] = useState(false); // Only for spinner UI
+  const [atBottom, setAtBottom] = useState(true);        // Track if user is at bottom
+  const PAGE_SIZE = 50;
+
+  // Reset pagination when channel changes
+  useEffect(() => {
+    pageRef.current = 0;
+    isLoadingMoreRef.current = false;
+    hasMoreRef.current = true;
+    setLoadingMore(false);
+  }, [channel?.id]);
 
   // Custom Alert State
   const [alert, setAlert] = useState({
@@ -90,6 +134,26 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
       setIsFullPickerOpen(false);
     });
   };
+
+  useEffect(() => {
+    if (!maskId) return;
+    
+    const checkNotifications = async () => {
+      try {
+        const { data } = await axios.get(`${BACKEND_URL}/api/notifications?maskId=${maskId}`);
+        if (data && data.length > 0) {
+          const ids = data.map(n => n.id);
+          showAlert('🚨 System Alert', data[0].message, 'info');
+          await axios.post(`${BACKEND_URL}/api/notifications/mark-read`, { ids });
+        }
+      } catch (err) { }
+    };
+
+    checkNotifications();
+    const interval = setInterval(checkNotifications, 15000); // 15s poll
+
+    return () => clearInterval(interval);
+  }, [maskId]);
 
   useEffect(() => {
     initChat();
@@ -191,20 +255,59 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
     }
   };
 
-  const fetchMessages = async () => {
+  const fetchMessages = async (pageNum = 0, append = false) => {
     try {
       if (!channel?.id || channel.id === 'undefined') return;
+
+      const from = pageNum * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
 
       const { data, error } = await supabase
         .from('messages')
         .select('*, profiles:sender_id(nickname), message_reactions(*)')
         .eq('channel_id', channel.id)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .range(from, to);
 
       if (error) throw error;
-      setMessages(data || []);
+      const fetched = data || [];
+      if (append) {
+        setMessages(prev => [...prev, ...fetched]); // Append older messages
+      } else {
+        setMessages(fetched); // Fresh load
+      }
+      // Update the ref synchronously so the guard works instantly
+      hasMoreRef.current = fetched.length === PAGE_SIZE;
     } catch (error) {
       console.error('Fetch error:', error);
+    }
+  };
+
+  const loadMoreMessages = async () => {
+    // Synchronous ref checks fire BEFORE React re-renders — bulletproof guard
+    if (isLoadingMoreRef.current || !hasMoreRef.current || isSearching) return;
+
+    isLoadingMoreRef.current = true;  // Lock immediately (synchronous)
+    setLoadingMore(true);             // Update spinner UI
+
+    const nextPage = pageRef.current + 1;
+    await fetchMessages(nextPage, true);
+    
+    pageRef.current = nextPage;
+    isLoadingMoreRef.current = false; // Unlock
+    setLoadingMore(false);
+  };
+
+
+  const deleteMessage = async (msgId) => {
+    try {
+      const { error } = await supabase.from('messages').delete().eq('id', msgId).eq('sender_id', maskId);
+      if (error) throw error;
+      setMessages(prev => prev.filter(m => m.id !== msgId));
+      showAlert('Deleted', 'Message was deleted successfully.', 'success');
+    } catch (err) {
+      console.error(err);
+      showAlert('Error', 'Could not delete the message.', 'error');
     }
   };
 
@@ -225,24 +328,49 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
     else setPolls(data || []);
   };
 
+
+
   const sendMessage = async () => {
     if (!content.trim()) return;
+    const trimmedContent = content.trim();
 
     try {
       if (!channel?.id || channel.id === 'undefined') {
         showAlert('Error', 'Invalid channel ID. Please try again.', 'error');
         return;
       }
-      const response = await axios.post(`${BACKEND_URL}/api/messages`, {
+
+      // ⚡ OPTIMISTIC UI: Show message immediately before server confirms
+      const optimisticMsg = {
+        id: `optimistic_${Date.now()}`,
+        content: trimmedContent,
+        sender_id: maskId,
+        channel_id: channel.id,
+        created_at: new Date().toISOString(),
+        reply_to_id: replyingTo?.id || null,
+        profiles: { nickname: myNickname },
+        message_reactions: [],
+        _optimistic: true, // Flag to identify before server confirms
+      };
+      setMessages(prev => [optimisticMsg, ...prev]);
+      setContent('');
+      setReplyingTo(null);
+      // Auto-scroll to bottom after optimistic insert
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+
+      // Send to server
+      await axios.post(`${BACKEND_URL}/api/messages`, {
         userId: user.id,
-        content: content.trim(),
+        content: trimmedContent,
         channelId: channel.id,
         replyToId: replyingTo?.id || null
       });
-      setContent('');
-      setReplyingTo(null);
-      fetchMessages();
+      // Server will broadcast via Supabase Realtime, which triggers fetchMessages()
+      // and replaces the optimistic message with the real one
     } catch (error) {
+      // Remove optimistic message on failure
+      setMessages(prev => prev.filter(m => !m._optimistic));
+      setContent(trimmedContent); // Restore input
       showAlert('Error', error.response?.data?.message || 'Failed to send message', 'error');
     }
   };
@@ -276,11 +404,20 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
       async () => {
         setAlert(prev => ({ ...prev, visible: false }));
         try {
-          await axios.post(`${BACKEND_URL}/api/messages/report`, { messageId });
-          showAlert('Reported', 'Thank you. A moderator will review this message shortly.', 'success');
-          fetchMessages();
+          const { data } = await axios.post(`${BACKEND_URL}/api/messages/${messageId}/report`, { maskId });
+          if (data && data.action === 'deleted') {
+            showAlert('Message Deleted', 'This message was removed after receiving multiple community reports.', 'info');
+            setMessages(prev => prev.filter(m => m.id !== messageId));
+          } else {
+            showAlert('Reported', 'Thank you. A moderator will review this message shortly.', 'success');
+            fetchMessages();
+          }
         } catch (e) {
-          showAlert('Error', 'Failed to report message.', 'error');
+          if (e.response?.data?.error) {
+            showAlert('Report Failed', e.response.data.error, 'error');
+          } else {
+            showAlert('Error', 'Failed to report message.', 'error');
+          }
         }
       },
       'REPORT',
@@ -303,6 +440,29 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
 
   const triggerPulsePoll = () => {
     setIsCreatingPoll(true);
+  };
+
+  const handleInviteUser = async (forcedName = null) => {
+    const finalName = (typeof forcedName === 'string' ? forcedName : inviteUsername).trim();
+    if (!finalName) {
+      showAlert('Required', 'Please enter a username to invite.', 'info');
+      return;
+    }
+    setInvitingLoading(true);
+    try {
+      const response = await axios.post(`${BACKEND_URL}/api/groups/${channel.id}/invite`, {
+        username: finalName,
+        inviterMaskId: maskId
+      });
+      setIsInvitingUser(false);
+      setInviteUsername('');
+      setSearchResults([]);
+      showAlert('Invite Sent', response.data.message || `Invitation sent to ${finalName}!`, 'success');
+    } catch (err) {
+      showAlert('Error', err.response?.data?.error || 'Failed to send invite', 'error');
+    } finally {
+      setInvitingLoading(false);
+    }
   };
 
   const broadcastPoll = async () => {
@@ -351,27 +511,54 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
       <StatusBar barStyle="dark-content" />
 
       <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <TouchableOpacity onPress={onBack} style={styles.backBtn}>
-            <Text style={styles.headerBackIcon}>←</Text>
-            <View style={styles.headerAvatar}>
-              <Text style={styles.avatarEmoji}>🎓</Text>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.headerTitleContainer} onPress={onOpenProfile}>
-            <Text style={styles.headerTitleText} numberOfLines={1}>{channel?.name || 'Group Chat'}</Text>
-            <Text style={styles.headerSubtitleText}>online</Text>
-          </TouchableOpacity>
-          <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.actionBtn}><Text style={styles.actionIcon}>🎥</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.actionBtn}><Text style={styles.actionIcon}>📞</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.actionBtn}><Text style={styles.actionIcon}>⋮</Text></TouchableOpacity>
+        {isSearching ? (
+          <View style={[styles.headerTop, { paddingRight: 5 }]}>
+            <TouchableOpacity onPress={() => { setIsSearching(false); setSearchQuery(''); }} style={styles.backBtn}>
+              <Text style={styles.headerBackIcon}>←</Text>
+            </TouchableOpacity>
+            <TextInput
+              style={[styles.chatInput, { backgroundColor: '#F3F4F6', borderRadius: 20, paddingHorizontal: 15, height: 40, marginTop: 0 }]}
+              placeholder="Search messages..."
+              placeholderTextColor="#9CA3AF"
+              autoFocus={true}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            <TouchableOpacity onPress={() => setSearchQuery('')} style={{ padding: 10 }}>
+              <Text style={{ color: '#9CA3AF', fontWeight: '800' }}>✕</Text>
+            </TouchableOpacity>
           </View>
-        </View>
+        ) : (
+          <View style={styles.headerTop}>
+            <TouchableOpacity onPress={() => onBack()} style={styles.backBtn}>
+              <Text style={styles.headerBackIcon}>←</Text>
+            </TouchableOpacity>
+            <View style={styles.headerAvatar}>
+              <Text style={styles.avatarEmoji}>{channel?.emoji || '🏫'}</Text>
+            </View>
+            <View style={styles.headerTitleContainer}>
+              <Text style={styles.headerTitleText} numberOfLines={1}>{channel?.name || 'CAMPUS CHAT'}</Text>
+              <Text style={styles.headerSubtitleText}>● LIVE FEED</Text>
+            </View>
+            <View style={styles.headerActions}>
+              {channel?.is_private && (
+                <TouchableOpacity style={styles.actionBtn} onPress={() => setIsInvitingUser(true)}>
+                  <Text style={styles.actionIcon}>👥</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={styles.actionBtn} onPress={() => setIsCreatingPoll(true)}>
+                <Text style={styles.actionIcon}>📊</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.actionBtn} onPress={() => setIsSearching(true)}>
+                <Text style={styles.actionIcon}>🔍</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         <View style={styles.headerBottomFixed}>
           <Text style={styles.maskBadgeText}>
-            {myNickname} • <Text style={{ fontWeight: '900' }}>{maskId ? maskId.substring(0, 8).toUpperCase() : '...'}</Text>
+            POSTING AS: <Text style={{ color: '#6366F1' }}>{myNickname.toUpperCase()}</Text> • <Text style={{ opacity: 0.6 }}>{maskId ? maskId.substring(0, 8).toUpperCase() : '...'}</Text>
           </Text>
         </View>
       </View>
@@ -389,11 +576,31 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
             disabled={!selectedMsgForReaction}
           >
             <FlatList
-              data={[...polls.map(p => ({ ...p, isPoll: true })), ...messages]}
+              ref={flatListRef}
+              data={[
+                ...polls.map(p => ({ ...p, isPoll: true })),
+                ...messages.filter(m => 
+                  !searchQuery || m.content?.toLowerCase().includes(searchQuery.toLowerCase())
+                )
+              ]}
               keyExtractor={(item) => item.id.toString()}
               inverted
               contentContainerStyle={{ paddingVertical: 20 }}
               scrollEnabled={!selectedMsgForReaction}
+              onScroll={(e) => {
+                // In inverted list, offset 0 = bottom (newest messages)
+                const y = e.nativeEvent.contentOffset.y;
+                setAtBottom(y < 80);
+              }}
+              scrollEventThrottle={100}
+              onEndReached={loadMoreMessages}
+              onEndReachedThreshold={0.3}
+              ListFooterComponent={loadingMore ? (
+                <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+                  <ActivityIndicator size="small" color="#6366F1" />
+                  <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 4 }}>Loading older messages...</Text>
+                </View>
+              ) : null}
               ListEmptyComponent={() => (
                 <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 60, paddingHorizontal: 30 }}>
                   <Text style={{ fontSize: 40, marginBottom: 14 }}>💬</Text>
@@ -493,7 +700,7 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
                     )}
                     <Swipeable
                       renderLeftActions={renderReplyAction}
-                      onSwipeableOpen={() => setReplyingTo(item)}
+                      onSwipeableLeftOpen={() => setReplyingTo(item)}
                       friction={2}
                     >
                       <TouchableOpacity
@@ -517,15 +724,9 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
                             <View style={[
                               styles.bubble,
                               isMe ? styles.selfBubble : styles.nodeBubble,
-                              !isFirstInGroup && (isMe ? { borderTopRightRadius: 12 } : { borderTopLeftRadius: 12 }),
+                              !isFirstInGroup && (isMe ? { borderTopRightRadius: 20 } : { borderTopLeftRadius: 20 }),
                               item.message_reactions?.length > 0 && { paddingBottom: 18 }
                             ]}>
-                              {isFirstInGroup && (
-                                <View style={[
-                                  styles.tailContainer,
-                                  isMe ? styles.selfTail : styles.nodeTail
-                                ]} />
-                              )}
 
                               {item.reply_to_id && (() => {
                                 const repliedMsg = messages.find(m => m.id === item.reply_to_id);
@@ -547,7 +748,7 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
                               </Text>
 
                               <View style={styles.timeContainer}>
-                                <Text style={styles.inlineTime}>{timeStr}</Text>
+                                <Text style={[styles.inlineTime, isMe && styles.selfTime]}>{timeStr}</Text>
                                 {isMe && <Text style={styles.tickIcon}>✓</Text>}
                               </View>
                             </View>
@@ -583,6 +784,24 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
             />
           </TouchableOpacity>
 
+          {/* 🔽 Scroll-to-bottom button — appears when scrolled away from latest messages */}
+          {!atBottom && (
+            <TouchableOpacity
+              style={{
+                position: 'absolute', bottom: 8, right: 14,
+                backgroundColor: '#6366F1', borderRadius: 22,
+                width: 44, height: 44,
+                justifyContent: 'center', alignItems: 'center',
+                shadowColor: '#6366F1', shadowOpacity: 0.4,
+                shadowRadius: 8, elevation: 6,
+              }}
+              onPress={() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true })}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#FFF', fontSize: 20, lineHeight: 24 }}>↓</Text>
+            </TouchableOpacity>
+          )}
+
           <View style={styles.inputArea}>
             {replyingTo && (
               <View style={styles.replyPreview}>
@@ -600,26 +819,15 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
 
             <View style={styles.inputContainerRow}>
               <View style={styles.inputWrapper}>
-                <TouchableOpacity style={{ padding: 5 }}>
-                  <Text style={{ fontSize: 22 }}>😊</Text>
-                </TouchableOpacity>
                 <TextInput
                   style={styles.chatInput}
-                  placeholder="Type a message"
+                  placeholder="Type a message..."
                   placeholderTextColor="#9CA3AF"
                   value={content}
                   onChangeText={setContent}
                   multiline={true}
                   maxLength={500}
                 />
-                <TouchableOpacity style={{ padding: 5 }}>
-                  <Text style={{ fontSize: 20, color: '#9CA3AF' }}>📎</Text>
-                </TouchableOpacity>
-                {!content.trim() && (
-                  <TouchableOpacity style={{ padding: 5 }}>
-                    <Text style={{ fontSize: 20, color: '#9CA3AF' }}>📷</Text>
-                  </TouchableOpacity>
-                )}
               </View>
               <TouchableOpacity
                 style={styles.sendBtn}
@@ -636,7 +844,7 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
         </View>
       </KeyboardAvoidingView>
 
-      {/* Floating Reaction Bar Modal (Absolute Top-Level Elevation) */}
+      {/* WhatsApp-Style Context Menu (Reactions + Actions) */}
       <Modal visible={!!selectedMsgForReaction && !isFullPickerOpen} transparent animationType="fade">
         <TouchableOpacity
           style={styles.pickerOverlay}
@@ -645,28 +853,100 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
           onPress={() => setSelectedMsgForReaction(null)}
         >
           <View style={[
-            styles.floatingPicker,
+            styles.contextMenuContainer,
             {
-              top: Math.max(100, Math.min(pickerPosition.y, screenHeight - 200)),
+              top: Math.max(60, Math.min(pickerPosition.y - 40, screenHeight - 380)),
               alignSelf: pickerPosition.isMe ? 'flex-end' : 'flex-start',
-              marginHorizontal: 30
+              marginHorizontal: 20
             }
           ]}>
-            {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
-              <TouchableOpacity
-                key={emoji}
-                onPress={() => toggleReaction(selectedMsgForReaction, emoji)}
-                style={styles.pickerEmojiBtn}
-              >
-                <Text style={styles.pickerEmoji}>{emoji}</Text>
+            {/* Reaction Ribbon */}
+            <View style={styles.reactionRibbon}>
+              {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
+                <TouchableOpacity
+                  key={emoji}
+                  onPress={() => toggleReaction(selectedMsgForReaction, emoji)}
+                  style={styles.ribbonEmojiBtn}
+                >
+                  <Text style={styles.pickerEmoji}>{emoji}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity onPress={openSheet} style={[styles.ribbonEmojiBtn, styles.plusBtn]}>
+                <Text style={styles.plusIcon}>+</Text>
               </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              onPress={openSheet}
-              style={[styles.pickerEmojiBtn, styles.plusBtn]}
-            >
-              <Text style={styles.plusIcon}>+</Text>
-            </TouchableOpacity>
+            </View>
+
+            {/* Vertical Action List */}
+            <View style={styles.actionListCard}>
+              <TouchableOpacity style={styles.actionListItem} onPress={() => {
+                const msg = messages.find(m => m.id === selectedMsgForReaction);
+                if (msg) setReplyingTo(msg);
+                setSelectedMsgForReaction(null);
+              }}>
+                <Text style={styles.actionListIcon}>↩️</Text>
+                <Text style={styles.actionListText}>Reply</Text>
+              </TouchableOpacity>
+              <View style={styles.actionListDivider} />
+              
+              <TouchableOpacity style={styles.actionListItem} onPress={() => {
+                const msg = messages.find(m => m.id === selectedMsgForReaction);
+                if (msg) {
+                  Clipboard.setString(msg.content);
+                  showAlert('Copied', 'Message text copied to clipboard.', 'success');
+                }
+                setSelectedMsgForReaction(null);
+              }}>
+                <Text style={styles.actionListIcon}>📋</Text>
+                <Text style={styles.actionListText}>Copy</Text>
+              </TouchableOpacity>
+              <View style={styles.actionListDivider} />
+
+              <TouchableOpacity style={styles.actionListItem} onPress={() => {
+                const msg = messages.find(m => m.id === selectedMsgForReaction);
+                if (msg) {
+                  const nick = msg.profiles?.nickname || 'ANONYMOUS';
+                  const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+                  showAlert('Message Info', `Sent by: ${nick}\nTime: ${time}\nID: ${String(msg.id).substring(0,8)}`, 'info');
+                }
+                setSelectedMsgForReaction(null);
+              }}>
+                <Text style={styles.actionListIcon}>ℹ️</Text>
+                <Text style={styles.actionListText}>Info</Text>
+              </TouchableOpacity>
+              <View style={styles.actionListDivider} />
+              
+              <TouchableOpacity style={styles.actionListItem} onPress={() => {
+                setSelectedMsgForReaction(null);
+                showAlert('Forward', 'Forwarding logic placeholder.', 'info');
+              }}>
+                <Text style={styles.actionListIcon}>↗️</Text>
+                <Text style={styles.actionListText}>Forward</Text>
+              </TouchableOpacity>
+
+              <View style={styles.actionListDivider} />
+              <TouchableOpacity style={styles.actionListItem} onPress={() => {
+                const msgId = selectedMsgForReaction;
+                setSelectedMsgForReaction(null);
+                reportMessage(msgId);
+              }}>
+                <Text style={[styles.actionListIcon, { color: '#F59E0B' }]}>🚩</Text>
+                <Text style={[styles.actionListText, { color: '#F59E0B' }]}>Report</Text>
+              </TouchableOpacity>
+
+              {pickerPosition.isMe && (
+                <>
+                  <View style={styles.actionListDivider} />
+                  <TouchableOpacity style={styles.actionListItem} onPress={() => {
+                    const msgId = selectedMsgForReaction;
+                    setSelectedMsgForReaction(null);
+                    deleteMessage(msgId);
+                  }}>
+                    <Text style={[styles.actionListIcon, { color: '#EF4444' }]}>🗑️</Text>
+                    <Text style={[styles.actionListText, { color: '#EF4444' }]}>Delete</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -717,6 +997,49 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
               ))}
             </ScrollView>
           </Animated.View>
+        </View>
+      </Modal>
+
+      {/* INVITE USER MODAL (Private Groups) */}
+      <Modal visible={isInvitingUser} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.promptCard}>
+            <Text style={styles.promptTitle}>Invite to Group</Text>
+            <Text style={styles.promptSub}>Enter the username of the person you want to invite to {channel?.name}.</Text>
+            <TextInput
+              style={styles.promptInput}
+              placeholder="e.g. JohnDoe99"
+              placeholderTextColor="#ADB5BD"
+              value={inviteUsername}
+              onChangeText={setInviteUsername}
+              autoCapitalize="none"
+              autoFocus
+            />
+
+            {searchResults.length > 0 && (
+              <View style={styles.searchDropdown}>
+                {searchResults.map((name) => (
+                  <TouchableOpacity 
+                    key={name} 
+                    style={styles.searchResultItem}
+                    onPress={() => handleInviteUser(name)}
+                  >
+                    <Text style={styles.searchResultIcon}>👤</Text>
+                    <Text style={styles.searchResultName}>{name}</Text>
+                    <Text style={styles.searchResultInvite}>INVITE</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <View style={styles.promptActions}>
+              <TouchableOpacity style={styles.promptBtnCancel} onPress={() => setIsInvitingUser(false)}>
+                <Text style={styles.promptBtnCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.promptBtnSubmit} onPress={handleInviteUser}>
+                {invitingLoading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.promptBtnSubmitText}>Invite</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
       </Modal>
 
@@ -795,347 +1118,396 @@ export default function ChatScreen({ user, channel, onOpenProfile, onBack }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#E5DDD5' },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#E5DDD5' },
+  container: { flex: 1, backgroundColor: '#F9FAFB' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F9FAFB' },
 
-  // Header Styles
+  // Header Styles (Modern, Clean White)
   header: {
-    backgroundColor: '#075E54',
+    backgroundColor: '#FFFFFF',
     paddingTop: Platform.OS === 'ios' ? 50 : 25,
-    paddingBottom: 10,
-    paddingHorizontal: 10,
-    elevation: 5,
+    paddingBottom: 15,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
     zIndex: 100,
+    elevation: 4,
   },
   headerTop: { flexDirection: 'row', alignItems: 'center' },
-  backBtn: { flexDirection: 'row', alignItems: 'center', padding: 5 },
-  headerBackIcon: { color: '#FFFFFF', fontSize: 24, marginRight: 5 },
-  headerAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center' },
-  avatarEmoji: { fontSize: 18 },
-  headerTitleContainer: { flex: 1, marginLeft: 10 },
-  headerTitleText: { color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
-  headerSubtitleText: { color: '#FFFFFF', fontSize: 12, opacity: 0.8 },
+  backBtn: { padding: 8, marginRight: 8 },
+  headerBackIcon: { color: '#1F2937', fontSize: 24 },
+  headerAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
+  avatarEmoji: { fontSize: 20 },
+  headerTitleContainer: { flex: 1, marginLeft: 12 },
+  headerTitleText: { color: '#111827', fontSize: 17, fontWeight: '700' },
+  headerSubtitleText: { color: '#6366F1', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
   headerActions: { flexDirection: 'row', alignItems: 'center' },
-  actionBtn: { padding: 10 },
-  actionIcon: { fontSize: 18, color: '#FFFFFF' },
+  actionBtn: { padding: 10, marginLeft: 5 },
+  actionIcon: { fontSize: 18, color: '#6B7280' },
 
   headerBottomFixed: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    backgroundColor: 'rgba(0,0,0,0.1)',
-    marginTop: 8,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: '#F3F4F6',
+    marginTop: 10,
+    borderRadius: 6,
     alignSelf: 'flex-start',
-    marginLeft: 55,
+    marginLeft: 48,
   },
-  maskBadgeText: { color: '#FFFFFF', fontSize: 10, opacity: 0.9, fontWeight: '600' },
+  maskBadgeText: { color: '#6B7280', fontSize: 9, fontWeight: '700', letterSpacing: 0.3 },
 
-  // Date Header
-  dateHeader: { alignItems: 'center', marginVertical: 12 },
-  datePill: { backgroundColor: '#D9D9D9', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 8 },
-  dateText: { fontSize: 11, color: '#5C5C5C', fontWeight: '800' },
+  // Date Header (Sleek Pill)
+  dateHeader: { alignItems: 'center', marginVertical: 20 },
+  datePill: { backgroundColor: '#F3F4F6', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20 },
+  dateText: { fontSize: 10, color: '#9CA3AF', fontWeight: '800', letterSpacing: 0.5 },
 
-  // Message Styles
-  messageWrapper: { width: '100%', paddingHorizontal: 15, marginVertical: 1 },
-  messageRow: { flexDirection: 'row', alignItems: 'flex-end', maxWidth: '85%' },
+  // Message Styles (Modern Pill Bubbles)
+  messageWrapper: { width: '100%', paddingHorizontal: 16, marginVertical: 2 },
+  messageRow: { flexDirection: 'row', alignItems: 'flex-end', maxWidth: '82%' },
   bubbleContainer: { position: 'relative' },
-  bubbleHeader: { color: '#075E54', fontSize: 12, fontWeight: '700', marginLeft: 8, marginBottom: 2 },
+  bubbleHeader: { color: '#6366F1', fontSize: 11, fontWeight: '800', marginLeft: 12, marginBottom: 4, letterSpacing: 0.3 },
 
   bubble: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    minWidth: 70,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
+    minWidth: 80,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  nodeBubble: { backgroundColor: '#FFFFFF', elevation: 1 },
-  selfBubble: { backgroundColor: '#DCF8C6', elevation: 1 },
-
-  // Tail Implementation
-  tailContainer: { position: 'absolute', top: 0, width: 10, height: 10 },
-  nodeTail: { left: -8, borderTopWidth: 10, borderTopColor: '#FFFFFF', borderLeftWidth: 10, borderLeftColor: 'transparent' },
-  selfTail: { right: -8, borderTopWidth: 10, borderTopColor: '#DCF8C6', borderRightWidth: 10, borderRightColor: 'transparent' },
-
-  scanlineOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.02)',
-    borderRadius: 8,
-    opacity: 0.05,
+  nodeBubble: { 
+    backgroundColor: '#FFFFFF', 
+    borderWidth: 1, 
+    borderColor: '#F3F4F6',
+    borderTopLeftRadius: 4, 
   },
+  selfBubble: { 
+    backgroundColor: '#6366F1', 
+    borderTopRightRadius: 4,
+  },
+
+  // Legacy Tail removed for Modern Look
+  tailContainer: { display: 'none' },
 
   messageText: {
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#303030',
-    fontWeight: '400'
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '450'
   },
-  nodeText: { color: '#303030' },
-  selfText: { color: '#303030' },
+  nodeText: { color: '#1F2937' },
+  selfText: { color: '#FFFFFF' },
 
   timeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-end',
-    marginTop: 2,
-    minWidth: 40,
+    marginTop: 4,
+    minWidth: 45,
     justifyContent: 'flex-end',
   },
   inlineTime: {
-    fontSize: 10,
-    color: '#8C8C8C',
-    marginLeft: 10,
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#9CA3AF',
   },
+  selfTime: { color: 'rgba(255,255,255,0.7)' },
   tickIcon: {
-    fontSize: 12,
-    color: '#8C8C8C',
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.8)',
     marginLeft: 4,
   },
 
-  inputArea: { padding: 8, backgroundColor: 'transparent' },
+  // Input Area (Modern Elevated Pill)
+  inputArea: { padding: 12, backgroundColor: '#F9FAFB', borderTopWidth: 0 },
   inputContainerRow: { flexDirection: 'row', alignItems: 'flex-end' },
   inputWrapper: {
     flex: 1,
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
-    borderRadius: 25,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    minHeight: 48,
+    borderRadius: 28,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    minHeight: 50,
     alignItems: 'center',
-    marginRight: 8,
-    elevation: 2,
+    marginRight: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 4,
   },
-  chatInput: { flex: 1, fontSize: 16, color: '#000', maxHeight: 120 },
+  chatInput: { flex: 1, fontSize: 15, color: '#111827', maxHeight: 120, paddingVertical: 5 },
   sendBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#075E54',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#6366F1',
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 3,
+    shadowColor: '#6366F1',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 5,
   },
-  sendIcon: { fontSize: 20, color: '#FFFFFF' },
-  profileBtn: {
-    marginLeft: 'auto',
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  profileEmoji: { fontSize: 14, color: '#FFFFFF' },
-  backBtn: {
-    padding: 5,
-  },
-  backIcon: {
-    fontSize: 22,
-    color: '#FFFFFF',
-    fontWeight: '300'
-  },
+  sendIcon: { fontSize: 22, color: '#FFFFFF', marginLeft: 2 },
+
   reactionContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     position: 'absolute',
-    bottom: -12,
+    bottom: -14,
     gap: 4,
     zIndex: 5,
   },
   reactionBadge: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 15,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#E9ECEF',
+    borderColor: '#F3F4F6',
     flexDirection: 'row',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
     elevation: 2
   },
   userReactionActive: {
-    borderColor: '#075E54',
-    backgroundColor: '#E7FFDB',
+    borderColor: '#6366F1',
+    backgroundColor: '#EEF2FF',
   },
   reactionText: {
-    color: '#303030',
+    color: '#4B5563',
     fontSize: 10,
-    fontWeight: '700'
+    fontWeight: '800'
   },
+
   floatingPicker: {
     position: 'absolute',
     backgroundColor: '#FFFFFF',
     flexDirection: 'row',
-    paddingHorizontal: 15,
-    paddingVertical: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
     borderRadius: 40,
     zIndex: 9999,
     shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    elevation: 10,
+    shadowOpacity: 0.15,
+    shadowRadius: 15,
+    elevation: 15,
   },
-  pickerEmojiBtn: { paddingHorizontal: 8 },
-  pickerEmoji: { fontSize: 24 },
+  pickerEmojiBtn: { paddingHorizontal: 10 },
+  pickerEmoji: { fontSize: 24 }, // Slightly smaller to fix squishing
   plusBtn: {
     paddingLeft: 8,
-    marginLeft: 8,
+    marginLeft: 4,
     borderLeftWidth: 1,
-    borderLeftColor: '#F0F0F0',
+    borderLeftColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  plusIcon: { fontSize: 20, color: '#999' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  plusIcon: { fontSize: 22, color: '#9CA3AF' },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   pickerOverlay: { flex: 1, backgroundColor: 'transparent', justifyContent: 'flex-start' },
-  modalCloseArea: {
-    flex: 1,
-  },
+  modalCloseArea: { flex: 1 },
   fullPickerSheet: {
     backgroundColor: '#FFFFFF',
     width: '100%',
     height: '75%',
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
-    padding: 25,
+    borderTopLeftRadius: 36,
+    borderTopRightRadius: 36,
+    padding: 24,
   },
-  sheetHeader: { alignItems: 'center', marginBottom: 20 },
-  dragHandle: { width: 40, height: 4, backgroundColor: '#E9ECEF', borderRadius: 2, marginBottom: 15 },
-  sheetTitle: { color: '#075E54', fontSize: 14, fontWeight: '800', textAlign: 'center' },
-  emojiScroll: {
-    flex: 1,
-  },
-  sectionContainer: {
-    marginBottom: 25,
-  },
-  sectionTitle: {
-    color: '#ADB5BD',
-    fontSize: 11,
-    fontWeight: '800',
-    marginBottom: 15,
-    marginLeft: 5,
-    letterSpacing: 1
-  },
-  emojiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  sheetHeader: { alignItems: 'center', marginBottom: 24 },
+  dragHandle: { width: 44, height: 5, backgroundColor: '#E5E7EB', borderRadius: 3, marginBottom: 18 },
+  sheetTitle: { color: '#111827', fontSize: 13, fontWeight: '900', textAlign: 'center', letterSpacing: 1 },
+  emojiScroll: { flex: 1 },
+  sectionContainer: { marginBottom: 28 },
+  sectionTitle: { color: '#9CA3AF', fontSize: 11, fontWeight: '900', marginBottom: 18, marginLeft: 6, letterSpacing: 1.5 },
+  emojiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   gridEmojiBtn: { width: '15%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center' },
-  gridEmoji: { fontSize: 28 },
-  // Poll Styles
-  pollWrapper: { paddingHorizontal: 15, marginVertical: 10 },
+  gridEmoji: { fontSize: 30 },
+
+  // Modern Poll Styles
+  pollWrapper: { paddingHorizontal: 16, marginVertical: 12 },
   pollCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 15,
-    padding: 15,
-    borderWidth: 0,
-    elevation: 2
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    elevation: 3
   },
-  pollHeader: {
-    marginBottom: 20,
-  },
-  pollBadge: { color: '#075E54', fontSize: 10, fontWeight: '800', marginBottom: 8 },
-  pollQuestion: { color: '#303030', fontSize: 16, fontWeight: '700' },
-  pollOptions: {
-    gap: 12,
-  },
+  pollHeader: { marginBottom: 20 },
+  pollBadge: { color: '#6366F1', fontSize: 10, fontWeight: '900', marginBottom: 10, letterSpacing: 1 },
+  pollQuestion: { color: '#111827', fontSize: 17, fontWeight: '700', lineHeight: 22 },
+  pollOptions: { gap: 10 },
   optionBtn: {
-    height: 45,
-    borderRadius: 10,
-    backgroundColor: '#F8F9FA',
-    marginTop: 10,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#F9FAFB',
+    marginTop: 8,
     overflow: 'hidden',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
   },
-  optionSelected: { backgroundColor: '#E7FFDB', borderColor: '#075E54', borderWidth: 1 },
-  optionProgress: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: 'rgba(37, 211, 102, 0.1)' },
-  optionContent: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12 },
-  optionText: { color: '#303030', fontSize: 14, fontWeight: '600' },
-  optionTextSelected: {
-    color: '#6366F1',
-  },
-  optionPercent: { color: '#8C8C8C', fontSize: 12 },
-  pollFooter: { marginTop: 10, alignItems: 'center' },
-  pollInfo: { color: '#8C8C8C', fontSize: 10, fontWeight: '700' },
+  optionSelected: { backgroundColor: '#EEF2FF', borderColor: '#6366F1', borderWidth: 1.5 },
+  optionProgress: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: 'rgba(99, 102, 241, 0.12)' },
+  optionContent: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 14 },
+  optionText: { color: '#374151', fontSize: 14, fontWeight: '600' },
+  optionTextSelected: { color: '#4F46E5', fontWeight: '800' },
+  optionPercent: { color: '#6B7280', fontSize: 12, fontWeight: '700' },
+
   // Create Poll Styles
-  createPollSheet: { backgroundColor: '#FFFFFF', width: '100%', maxHeight: '85%', borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25 },
-  inputLabel: {
-    color: '#6366F1',
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 2,
-  },
-  pollInput: { backgroundColor: '#F8F9FA', borderRadius: 10, padding: 15, marginTop: 10, fontSize: 15 },
-  optionInputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 10,
-  },
-  addOptionText: {
-    color: '#28A745',
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
+  createPollSheet: { backgroundColor: '#FFFFFF', width: '100%', maxHeight: '85%', borderTopLeftRadius: 36, borderTopRightRadius: 36, padding: 26 },
+  inputLabel: { color: '#6366F1', fontSize: 10, fontWeight: '900', letterSpacing: 2, marginBottom: 5 },
+  pollInput: { backgroundColor: '#F9FAFB', borderRadius: 12, padding: 16, marginTop: 10, fontSize: 15, color: '#111827' },
+  optionInputRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 12 },
+  addOptionText: { color: '#10B981', fontSize: 11, fontWeight: '900', letterSpacing: 1 },
   removeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(220, 53, 69, 0.1)',
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  removeIcon: {
-    color: '#DC3545',
-    fontSize: 14,
-    fontWeight: '900',
-  },
-  broadcastBtn: { backgroundColor: '#075E54', borderRadius: 25, padding: 15, marginTop: 25, alignItems: 'center' },
-  broadcastBtnText: { color: '#FFFFFF', fontWeight: '800' },
-  // Back button styles
-  backBtn: {
-    marginRight: 15,
-    padding: 5,
-  },
-  backIcon: {
-    fontSize: 20,
-  },
-  // Swipe & Reply Styles
+  removeIcon: { color: '#EF4444', fontSize: 14, fontWeight: '900' },
+  broadcastBtn: { backgroundColor: '#6366F1', borderRadius: 28, padding: 18, marginTop: 28, alignItems: 'center', elevation: 4 },
+  broadcastBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15, letterSpacing: 0.5 },
+
+  // Swipe & Reply Styles (Indigo Toned)
   quoteBlock: {
-    backgroundColor: 'rgba(0,0,0,0.05)',
+    backgroundColor: 'rgba(99, 102, 241, 0.05)',
     borderLeftWidth: 3,
     borderLeftColor: '#6366F1',
     borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     marginBottom: 8,
   },
-  quoteNickname: {
-    color: '#6366F1',
-    fontSize: 11,
-    fontWeight: '800',
-    marginBottom: 4,
-  },
-  quoteText: {
-    color: '#495057',
-    fontSize: 12,
-  },
+  quoteNickname: { color: '#6366F1', fontSize: 11, fontWeight: '800', marginBottom: 4 },
+  quoteText: { color: '#4B5563', fontSize: 12, lineHeight: 16 },
   replyPreview: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F3F4F6',
-    padding: 12,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     borderLeftWidth: 4,
     borderLeftColor: '#6366F1',
-    marginHorizontal: 15,
-    marginBottom: -15, // tucks under the input container
+    marginHorizontal: 12,
+    marginBottom: -10,
     zIndex: 0,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
   },
-  replyPreviewHeader: {
-    fontSize: 12,
+  replyPreviewHeader: { fontSize: 12, fontWeight: '800', color: '#6366F1', marginBottom: 2 },
+  replyPreviewText: { fontSize: 13, color: '#6B7280', lineHeight: 18 },
+
+  // Swipe-to-Action Styles (Kept for reference or future use if needed)
+  actionSwipeBtn: {
+    width: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  actionSwipeText: {
+    fontSize: 22,
+    marginBottom: 4
+  },
+  actionSwipeLabel: {
+    color: '#FFF',
+    fontSize: 9,
     fontWeight: '800',
-    color: '#6366F1',
-    marginBottom: 2,
+    letterSpacing: 0.5
   },
-  replyPreviewText: {
-    fontSize: 13,
-    color: '#6B7280',
-  }
+
+  // WhatsApp-Style Context Menu Styles
+  contextMenuContainer: {
+    width: 290, // Increased width to fit all 6 emojis + plus sign
+    alignItems: 'center',
+  },
+  reactionRibbon: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 30,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+    marginBottom: 10,
+    justifyContent: 'space-between',
+    alignItems: 'center', // Center vertically
+    width: '100%',
+  },
+  ribbonEmojiBtn: {
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  actionListCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    width: '100%',
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 6,
+    overflow: 'hidden',
+  },
+  actionListItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#FFFFFF',
+  },
+  actionListIcon: {
+    fontSize: 20,
+    marginRight: 14,
+    color: '#4B5563',
+    width: 24,
+    textAlign: 'center',
+  },
+  actionListText: {
+    fontSize: 16,
+    color: '#1F2937',
+    fontWeight: '500',
+  },
+  actionListDivider: {
+    height: 1,
+    backgroundColor: '#F3F4F6',
+    marginHorizontal: 16,
+  },
+
+  // Prompt Modal Styles (Added for Inviting Users)
+  promptCard: { backgroundColor: '#FFF', width: '100%', borderRadius: 20, padding: 24, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 10, marginBottom: '40%' },
+  promptTitle: { fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 8 },
+  promptSub: { fontSize: 14, color: '#6B7280', marginBottom: 20 },
+  promptInput: { backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, fontSize: 16, color: '#111827', marginBottom: 24 },
+  promptActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
+  promptBtnCancel: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10 },
+  promptBtnCancelText: { color: '#6B7280', fontWeight: '700', fontSize: 15 },
+  promptBtnSubmit: { backgroundColor: '#6366F1', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, minWidth: 80, alignItems: 'center' },
+  promptBtnSubmitText: { color: '#FFF', fontWeight: '700', fontSize: 15 },
+
+  // Search result styles
+  searchDropdown: { backgroundColor: '#F9FAFB', borderRadius: 12, marginTop: -16, marginBottom: 20, borderWidth: 1, borderColor: '#E5E7EB', overflow: 'hidden' },
+  searchResultItem: { flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  searchResultIcon: { fontSize: 14, marginRight: 10 },
+  searchResultName: { flex: 1, fontSize: 13, fontWeight: '700', color: '#111827' },
+  searchResultInvite: { fontSize: 10, fontWeight: '900', color: '#6366F1' },
 });
+

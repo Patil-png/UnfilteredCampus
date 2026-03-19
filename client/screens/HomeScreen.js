@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
-  StatusBar, Dimensions, ActivityIndicator
+  StatusBar, Dimensions, ActivityIndicator, Modal, TextInput
 } from 'react-native';
 import { supabase } from '../supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
+
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.243:5000';
 
 const SELECTED_GROUP_KEY = '@campus_selected_group';
 
@@ -17,6 +20,11 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
   const [loading, setLoading] = useState(true);
   const [userGroup, setUserGroup] = useState(propGroup);
   const [showFullDirectory, setShowFullDirectory] = useState(false);
+  const [privateGroups, setPrivateGroups] = useState([]);
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingInvites, setPendingInvites] = useState([]);
 
   useEffect(() => {
     if (propGroup) setUserGroup(propGroup);
@@ -43,7 +51,7 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
       // 1. Build filtered queries
       let collegeQuery = supabase.from('colleges').select('*').order('name');
       let categoryQuery = supabase.from('categories').select('*').order('name');
-      let channelQuery = supabase.from('channels').select('*').eq('status', 'active');
+      let channelQuery = supabase.from('channels').select('*').eq('status', 'active').eq('is_private', false);
 
       if (activeGroup?.collegeId) {
         collegeQuery = collegeQuery.eq('id', activeGroup.collegeId);
@@ -54,22 +62,88 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
         // Full directory: Apply strict limits
         collegeQuery = collegeQuery.limit(20);
         categoryQuery = categoryQuery.limit(20);
-        channelQuery = channelQuery.limit(50);
+        channelQuery = channelQuery.limit(100);
       }
 
-      const [collRes, catRes, chanRes] = await Promise.all([
+      const [collRes, catRes, chanRes, profRes] = await Promise.all([
         collegeQuery,
         categoryQuery,
-        channelQuery
+        channelQuery,
+        user?.id ? axios.get(`${BACKEND_URL}/api/profiles/user/${user.id}`).catch(() => ({ data: null })) : { data: null }
       ]);
+
+      const myMaskId = profRes.data?.mask_id || '';
+      
+      if (myMaskId) {
+        const [privRes, invRes] = await Promise.all([
+          axios.get(`${BACKEND_URL}/api/groups/private?maskId=${myMaskId}`).catch(() => ({ data: [] })),
+          axios.get(`${BACKEND_URL}/api/groups/invites?maskId=${myMaskId}`).catch(() => ({ data: [] }))
+        ]);
+        setPrivateGroups(privRes.data || []);
+        setPendingInvites(invRes.data || []);
+      }
 
       setColleges(collRes.data || []);
       setCategories(catRes.data || []);
       setChannels(chanRes.data || []);
+
+      // 🏥 FALLBACK: If we have no activeGroup (relogin/fresh), restore from profile
+      if (!activeGroup && profRes.data?.selected_channel) {
+        const sc = profRes.data.selected_channel;
+        const restored = {
+          collegeId: sc.college_id || sc.categories?.college_id || null,
+          categoryId: sc.category_id || null,
+          channel: { id: sc.id, name: sc.name, icon: sc.icon, is_private: sc.is_private || false }
+        };
+        setUserGroup(restored);
+        await AsyncStorage.setItem(SELECTED_GROUP_KEY, JSON.stringify(restored));
+      }
     } catch (e) {
       console.warn('[HOME] Fetch error:', e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim()) return;
+    setIsSubmitting(true);
+    try {
+      let myMaskId = '';
+      if (user?.id) {
+        const profRes = await axios.get(`${BACKEND_URL}/api/profiles/user/${user.id}`);
+        myMaskId = profRes.data.mask_id;
+      }
+      
+      const { data } = await axios.post(`${BACKEND_URL}/api/groups`, {
+        name: newGroupName.trim(),
+        maskId: myMaskId
+      });
+      setPrivateGroups(prev => [data, ...prev]);
+      setIsCreatingGroup(false);
+      setNewGroupName('');
+      
+      const channelData = {
+        collegeId: null,
+        categoryId: null,
+        channel: { id: data.id, name: data.name, icon: data.icon, is_private: true },
+      };
+      await AsyncStorage.setItem(SELECTED_GROUP_KEY, JSON.stringify(channelData));
+      onJoinChat(channelData);
+    } catch (err) {
+      console.warn('Failed to create private group:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleInviteAction = async (inviteId, action) => {
+    try {
+      await axios.post(`${BACKEND_URL}/api/groups/invites/${inviteId}/${action}`);
+      setPendingInvites(prev => prev.filter(i => i.id !== inviteId));
+      fetchHierarchy(); // Refresh 
+    } catch (err) {
+      console.warn('Invite action error:', err);
     }
   };
 
@@ -81,7 +155,7 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
   // Filter categories to ONLY the one the user picked, if they picked one.
   const getCatsByCollege = (collegeId) => {
     let cats = categories.filter(c => c.college_id === collegeId);
-    if (userGroup?.categoryId) {
+    if (userGroup?.categoryId && userGroup?.collegeId) {
       cats = cats.filter(c => c.id === userGroup.categoryId);
     }
     return cats;
@@ -89,8 +163,8 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
 
   // Filter channels to ONLY the one specific class they picked
   const getChannelsByCat = (catId) => {
-    let chans = channels.filter(c => c.category_id === catId && !c.is_global && !c.college_id);
-    if (userGroup?.channel?.id) {
+    let chans = channels.filter(c => c.category_id === catId && !c.is_global);
+    if (userGroup?.channel?.id && userGroup?.collegeId) {
       chans = chans.filter(c => c.id === userGroup.channel.id);
     }
     return chans;
@@ -137,7 +211,7 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
                 </View>
                 <TouchableOpacity 
                   style={styles.myClassCard} 
-                  onPress={() => onJoinChat(userGroup.channel)}
+                  onPress={() => onJoinChat(userGroup)}
                   activeOpacity={0.9}
                 >
                   <View style={styles.myClassLeft}>
@@ -167,7 +241,7 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
                   </View>
                   <TouchableOpacity 
                     style={[styles.myClassCard, { borderColor: '#D1FAE5', backgroundColor: '#F0FDF4' }]} 
-                    onPress={() => onJoinChat(collegeChannel)}
+                    onPress={() => onJoinChat({ collegeId: userGroup.collegeId, categoryId: null, channel: collegeChannel })}
                     activeOpacity={0.9}
                   >
                     <View style={styles.myClassLeft}>
@@ -196,6 +270,71 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
           </View>
         ) : (
           <>
+            {/* Pending Invitations Section */}
+            {pendingInvites.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={[styles.sectionLabel, { color: '#6366F1' }]}>📬 PENDING INVITATIONS</Text>
+                  <Text style={styles.sectionSub}>Group requests</Text>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginLeft: -4 }}>
+                  {pendingInvites.map((invite) => (
+                    <View key={invite.id} style={[styles.globalCard, { backgroundColor: '#EEF2FF', borderLeftWidth: 4, borderColor: '#6366F1' }]}>
+                      <Text style={styles.globalCardEmoji}>{invite.channels?.icon || '🔒'}</Text>
+                      <Text style={[styles.globalCardName, { color: '#111827', fontSize: 13 }]}>{invite.channels?.name}</Text>
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                        <TouchableOpacity 
+                          style={{ backgroundColor: '#10B981', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, flex: 1, alignItems: 'center' }}
+                          onPress={() => handleInviteAction(invite.id, 'accept')}
+                        >
+                          <Text style={{ color: '#FFF', fontSize: 9, fontWeight: '900' }}>ACCEPT</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                          style={{ backgroundColor: '#EF4444', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, flex: 1, alignItems: 'center' }}
+                          onPress={() => handleInviteAction(invite.id, 'decline')}
+                        >
+                          <Text style={{ color: '#FFF', fontSize: 9, fontWeight: '900' }}>NO</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* Private Groups Section (Always Visible Now) */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={[styles.sectionLabel, { color: '#059669' }]}>🔒 PRIVATE GROUPS</Text>
+                <Text style={styles.sectionSub}>Invisible to others</Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginLeft: -4 }}>
+                <TouchableOpacity
+                  style={[styles.globalCard, { backgroundColor: '#FAFAFA', borderWidth: 2, borderColor: '#10B981', borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center', paddingVertical: 20 }]}
+                  onPress={() => setIsCreatingGroup(true)}
+                  activeOpacity={0.88}
+                >
+                  <Text style={[styles.globalCardEmoji, { fontSize: 26, marginBottom: 4 }]}>➕</Text>
+                  <Text style={[styles.globalCardName, { color: '#059669', textAlign: 'center', marginBottom: 0, fontSize: 13 }]}>Create Group</Text>
+                </TouchableOpacity>
+
+                {privateGroups.map((g, i) => (
+                  <TouchableOpacity
+                    key={g.id}
+                    style={[styles.globalCard, { backgroundColor: '#10B981' }]}
+                    onPress={() => onJoinChat({ collegeId: null, categoryId: null, channel: { id: g.id, name: g.name, icon: g.icon, is_private: true } })}
+                    activeOpacity={0.88}
+                  >
+                    <Text style={styles.globalCardEmoji}>{g.icon}</Text>
+                    <Text style={styles.globalCardName}>{g.name}</Text>
+                    <View style={[styles.globalCardJoin, { backgroundColor: 'rgba(255,255,255,0.3)' }]}>
+                      <Text style={[styles.globalCardJoinText, { color: '#FFF' }]}>ENTER →</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
             {/* Global Lounge Section */}
             {globalChannels.length > 0 && (
               <View style={styles.section}>
@@ -208,7 +347,7 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
                     <TouchableOpacity
                       key={ch.id}
                       style={[styles.globalCard, { backgroundColor: CARD_COLORS[i % CARD_COLORS.length] }]}
-                      onPress={() => onJoinChat({ id: ch.id, name: ch.name, icon: ch.icon })}
+                      onPress={() => onJoinChat({ collegeId: null, categoryId: null, channel: { id: ch.id, name: ch.name, icon: ch.icon } })}
                       activeOpacity={0.88}
                     >
                       <Text style={styles.globalCardEmoji}>{ch.icon}</Text>
@@ -222,8 +361,8 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
               </View>
             )}
 
-            {/* Full College Directory - Hidden by default if user has a class */}
-            {(showFullDirectory || !userGroup?.channel) && colleges.map((college, ci) => {
+            {/* Full College Directory - Hidden by default if user has a college class */}
+            {(showFullDirectory || !userGroup?.channel || !userGroup?.collegeId) && colleges.map((college, ci) => {
               const collegeChannel = getCollegeChannel(college.id);
               const cats = getCatsByCollege(college.id);
               const hasCats = cats.some(cat => getChannelsByCat(cat.id).length > 0);
@@ -232,7 +371,7 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
                   <TouchableOpacity
                     style={[styles.collegeHeader, { borderLeftColor: CARD_COLORS[ci % CARD_COLORS.length] }]}
                     onPress={() => {
-                      if (collegeChannel) onJoinChat({ id: collegeChannel.id, name: collegeChannel.name, icon: collegeChannel.icon });
+                      if (collegeChannel) onJoinChat({ collegeId: college.id, categoryId: null, channel: collegeChannel });
                     }}
                     activeOpacity={0.85}
                   >
@@ -266,7 +405,7 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
                             <TouchableOpacity
                               key={ch.id}
                               style={styles.classChip}
-                              onPress={() => onJoinChat({ id: ch.id, name: ch.name, icon: ch.icon })}
+                              onPress={() => onJoinChat({ collegeId: college.id, categoryId: cat.id, channel: { id: ch.id, name: ch.name, icon: ch.icon } })}
                               activeOpacity={0.85}
                             >
                               <View style={[styles.classChipIcon, { backgroundColor: CARD_COLORS[(ci + chi) % CARD_COLORS.length] + '20' }]}>
@@ -296,6 +435,33 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
           </>
         )}
       </ScrollView>
+
+      {/* CREATE PRIVATE GROUP MODAL */}
+      <Modal visible={isCreatingGroup} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.promptCard}>
+            <Text style={styles.promptTitle}>Create Private Group</Text>
+            <Text style={styles.promptSub}>Give your new group a name.</Text>
+            <TextInput
+              style={styles.promptInput}
+              placeholder="e.g. Study Squad"
+              placeholderTextColor="#ADB5BD"
+              value={newGroupName}
+              onChangeText={setNewGroupName}
+              autoFocus
+            />
+            <View style={styles.promptActions}>
+              <TouchableOpacity style={styles.promptBtnCancel} onPress={() => setIsCreatingGroup(false)}>
+                <Text style={styles.promptBtnCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.promptBtnSubmit} onPress={handleCreateGroup}>
+                {isSubmitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.promptBtnSubmitText}>Create</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -421,4 +587,16 @@ const styles = StyleSheet.create({
   emptyEmoji: { fontSize: 52, marginBottom: 16 },
   emptyTitle: { fontSize: 20, fontWeight: '900', color: '#111827', marginBottom: 8 },
   emptySub: { fontSize: 13, color: '#9CA3AF', textAlign: 'center', lineHeight: 20 },
+
+  // Prompt Modal Styles (Added for Creating Group natively)
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  promptCard: { backgroundColor: '#FFF', width: '100%', borderRadius: 20, padding: 24, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 10 },
+  promptTitle: { fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 8 },
+  promptSub: { fontSize: 14, color: '#6B7280', marginBottom: 20 },
+  promptInput: { backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, fontSize: 16, color: '#111827', marginBottom: 24 },
+  promptActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
+  promptBtnCancel: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10, justifyContent: 'center' },
+  promptBtnCancelText: { color: '#6B7280', fontWeight: '700', fontSize: 15 },
+  promptBtnSubmit: { backgroundColor: '#10B981', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, minWidth: 80, alignItems: 'center', justifyContent: 'center' },
+  promptBtnSubmitText: { color: '#FFF', fontWeight: '700', fontSize: 15 },
 });

@@ -126,11 +126,14 @@ export default function App() {
   };
 
   // Navigate to chat — accepts a full channel object { id, name, icon }
-  const goToChat = async (passedChannel) => {
+  const goToChat = async (selection) => {
     try {
+      // 🛡️ Selection might be raw channel OR { collegeId, channel }
+      const targetChannel = selection?.channel || selection;
+
       // 1. If we have a valid channel, go there
-      if (passedChannel?.id && passedChannel.id !== 'undefined') {
-        setSelectedChannel(passedChannel);
+      if (targetChannel?.id && targetChannel.id !== 'undefined') {
+        setSelectedChannel(selection);
         setCurrentScreen('chat');
         return;
       }
@@ -272,14 +275,14 @@ export default function App() {
 
         {showTabs && (
           <View style={styles.tabBar}>
-            {/* Chat Tab — goes to saved group */}
-            <TouchableOpacity style={styles.tab} onPress={() => goToChat(null)} activeOpacity={0.8}>
+            {/* Chat Tab — goes to last active class/context */}
+            <TouchableOpacity style={styles.tab} onPress={() => goToChat(savedGroup)} activeOpacity={0.8}>
               <View style={styles.tabIconWrap}>
                 <Text style={[styles.tabIcon, currentScreen === 'chat' && styles.tabIconActive]}>💬</Text>
                 {savedGroup && <View style={styles.groupDot} />}
               </View>
               <Text style={[styles.tabLabel, currentScreen === 'chat' && styles.tabLabelActive]}>
-                {savedGroup ? savedGroup.name?.split(' ')[0] : 'Chat'}
+                {savedGroup ? (savedGroup.channel?.name || savedGroup.name || 'Chat')?.split(' ')[0] : 'Chat'}
               </Text>
             </TouchableOpacity>
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
-  ActivityIndicator, StatusBar, Dimensions, Alert
+  ActivityIndicator, StatusBar, Dimensions, Alert, TextInput, Modal
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../supabaseClient';
@@ -24,6 +24,11 @@ export default function OnboardingScreen({ user: sessionUser, onComplete }) {
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [selectedChannel, setSelectedChannel] = useState(null);
 
+  const [privateGroups, setPrivateGroups] = useState([]);
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [maskId, setMaskId] = useState('');
+
   // Custom Alert State
   const [alert, setAlert] = useState({ visible: false, title: '', message: '', type: 'info' });
 
@@ -34,20 +39,63 @@ export default function OnboardingScreen({ user: sessionUser, onComplete }) {
   useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
-    const [collRes, catRes, chanRes] = await Promise.all([
-      supabase.from('colleges').select('*').order('name'),
-      supabase.from('categories').select('*').order('name'),
-      supabase.from('channels').select('*').eq('status', 'active').order('name'),
-    ]);
-    setColleges(collRes.data || []);
-    setCategories(catRes.data || []);
-    setChannels(chanRes.data || []);
-    setLoading(false);
+    try {
+      const [collRes, catRes, chanRes, profRes] = await Promise.all([
+        supabase.from('colleges').select('*').order('name'),
+        supabase.from('categories').select('*').order('name'),
+        supabase.from('channels').select('*').eq('status', 'active').eq('is_private', false).order('name'),
+        sessionUser?.id ? axios.get(`${BACKEND_URL}/api/profiles/user/${sessionUser.id}`).catch(() => ({ data: null })) : { data: null }
+      ]);
+      setColleges(collRes.data || []);
+      setCategories(catRes.data || []);
+      setChannels(chanRes.data || []);
+
+      const myMaskId = profRes.data?.mask_id || '';
+      setMaskId(myMaskId);
+
+      if (myMaskId) {
+        const privRes = await axios.get(`${BACKEND_URL}/api/groups/private?maskId=${myMaskId}`).catch(() => ({ data: [] }));
+        setPrivateGroups(privRes.data || []);
+      }
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const filteredCategories = categories.filter(c => c.college_id === selectedCollege?.id);
   const filteredChannels = channels.filter(c => c.category_id === selectedCategory?.id && !c.is_global);
   const globalChannels = channels.filter(c => c.is_global);
+
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim()) {
+      showAlert('Required', 'Group name cannot be empty.', 'info');
+      return;
+    }
+    setLoading(true);
+    try {
+      const { data } = await axios.post(`${BACKEND_URL}/api/groups`, {
+        name: newGroupName.trim(),
+        maskId: maskId
+      });
+      setPrivateGroups(prev => [data, ...prev]);
+      setIsCreatingGroup(false);
+      setNewGroupName('');
+      
+      const channelData = {
+        collegeId: null,
+        categoryId: null,
+        channel: { id: data.id, name: data.name, icon: data.icon, is_private: true },
+      };
+      await AsyncStorage.setItem(SELECTED_GROUP_KEY, JSON.stringify(channelData));
+      await AsyncStorage.setItem(ONBOARDING_DONE_KEY, 'true');
+      onComplete(channelData);
+    } catch (err) {
+      showAlert('Error', err.response?.data?.error || 'Failed to create group.', 'error');
+      setLoading(false);
+    }
+  };
 
   const handleFinish = async () => {
     if (!selectedChannel) { showAlert('Required', 'Please select a class to continue.', 'info'); return; }
@@ -180,6 +228,21 @@ export default function OnboardingScreen({ user: sessionUser, onComplete }) {
             </TouchableOpacity>
           )}
 
+          <TouchableOpacity
+            style={[styles.optionCard, { borderColor: '#10B981', backgroundColor: '#ECFDF5' }]}
+            onPress={() => setStep(5)}
+            activeOpacity={0.85}
+          >
+            <View style={[styles.optionIconBox, { backgroundColor: '#10B981' }]}>
+              <Text style={styles.optionEmoji}>🔒</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.optionName, { color: '#047857' }]}>My Private Groups</Text>
+              <Text style={styles.optionCount}>Chat privately with your friends</Text>
+            </View>
+            <View style={styles.chevronBox}><Text style={styles.chevron}>›</Text></View>
+          </TouchableOpacity>
+
           {/* College cards — tap = directly join that college's chat */}
           {colleges.map((college, i) => (
             <TouchableOpacity
@@ -308,13 +371,79 @@ export default function OnboardingScreen({ user: sessionUser, onComplete }) {
     );
   };
 
+  // ─── Step 5: Private Groups ───────────────────────────────────────────────────
+  const renderPrivateGroups = () => (
+    <View style={styles.page}>
+      <ProgressBar current={3} total={3} />
+      <TouchableOpacity onPress={() => setStep(2)} style={styles.backBtn}>
+        <Text style={styles.backBtnText}>← Back</Text>
+      </TouchableOpacity>
+      <Text style={styles.stepLabel}>STEP 2 OF 3</Text>
+      <Text style={styles.stepHeading}>My Private Groups 🔒</Text>
+      <Text style={styles.stepSub}>Select or create a private group to enter.</Text>
+
+      <TouchableOpacity style={[styles.optionCard, { borderColor: '#6366F1', borderStyle: 'dashed', borderWidth: 2, backgroundColor: '#FAFAFA' }]} onPress={() => setIsCreatingGroup(true)} activeOpacity={0.85}>
+        <View style={[styles.optionIconBox, { backgroundColor: '#E0E7FF' }]}><Text style={styles.optionEmoji}>➕</Text></View>
+        <View style={{ flex: 1 }}><Text style={[styles.optionName, { color: '#4F46E5' }]}>Create New Group</Text></View>
+      </TouchableOpacity>
+
+      <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 16 }}>
+        {privateGroups.length === 0 ? (
+          <View style={styles.emptyBox}>
+            <Text style={styles.emptyEmoji}>👥</Text>
+            <Text style={styles.emptyText}>You haven't joined any groups yet.</Text>
+          </View>
+        ) : privateGroups.map((g, i) => {
+          const isSelected = selectedChannel?.id === g.id;
+          return (
+            <TouchableOpacity key={g.id} style={[styles.optionCard, isSelected && styles.optionCardSelected]} onPress={() => setSelectedChannel(g)} activeOpacity={0.85}>
+              <View style={[styles.optionIconBox, { backgroundColor: isSelected ? '#6366F1' : '#10B981' }]}><Text style={styles.optionEmoji}>{g.icon}</Text></View>
+              <View style={{ flex: 1 }}><Text style={[styles.optionName, isSelected && { color: '#4338CA' }]}>{g.name}</Text></View>
+              {isSelected ? <View style={styles.checkBox}><Text style={styles.checkMark}>✓</Text></View> : <View style={styles.chevronBox}><Text style={styles.chevron}>›</Text></View>}
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+      {selectedChannel && selectedChannel.is_private && (
+        <TouchableOpacity style={styles.finishBtn} onPress={async () => {
+          setLoading(true);
+          const channelData = { collegeId: null, categoryId: null, channel: { id: selectedChannel.id, name: selectedChannel.name, icon: selectedChannel.icon, is_private: true } };
+          await AsyncStorage.setItem(SELECTED_GROUP_KEY, JSON.stringify(channelData));
+          await AsyncStorage.setItem(ONBOARDING_DONE_KEY, 'true');
+          if (sessionUser?.id) await axios.post(`${BACKEND_URL}/api/profiles`, { userId: sessionUser.id, selectedChannelId: selectedChannel.id });
+          onComplete(channelData);
+        }}>
+          <Text style={styles.finishBtnText}>Enter {selectedChannel.name} →</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: '#FAFAFA' }}>
+      <Modal visible={isCreatingGroup} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.promptCard}>
+            <Text style={styles.promptTitle}>Create Private Group</Text>
+            <Text style={styles.promptSub}>Give your new group a name.</Text>
+            <TextInput style={styles.promptInput} placeholder="e.g. Study Squad" value={newGroupName} onChangeText={setNewGroupName} autoFocus />
+            <View style={styles.promptActions}>
+              <TouchableOpacity style={styles.promptBtnCancel} onPress={() => setIsCreatingGroup(false)}><Text style={styles.promptBtnCancelText}>Cancel</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.promptBtnSubmit} onPress={handleCreateGroup}>
+                {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.promptBtnSubmitText}>Create</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <StatusBar barStyle="dark-content" backgroundColor="#FAFAFA" />
       {step === 1 && renderWelcome()}
       {step === 2 && renderPickCollege()}
       {step === 3 && renderPickCategory()}
       {step === 4 && renderPickClass()}
+      {step === 5 && renderPrivateGroups()}
 
       <CustomAlert 
         visible={alert.visible}

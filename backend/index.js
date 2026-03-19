@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const { createClient } = require('@supabase/supabase-js');
 const { deepClean } = require('./utils/moderation'); // Advanced Heuristic Filter
 const { generateAnonymousId } = require('./utils/crypto');
@@ -12,13 +13,67 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
+// ============================================================
+// ⚡ RATE LIMITERS — Prevent abuse at scale (100K users)
+// ============================================================
+
+// Auth routes: 100 attempts per 15 minutes per IP
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please try again later.' },
+  skip: (req) => process.env.NODE_ENV === 'development', // Skip in dev mode
+});
+
+// Mask endpoint: 300 per minute per IP  
+const maskLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many identity requests. Please slow down.' },
+  skip: (req) => process.env.NODE_ENV === 'development',
+});
+
+// Message endpoint: 600 messages per minute per IP (prevents spam)
+const messageRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Slow down! You are sending messages too fast.' },
+  skip: (req) => process.env.NODE_ENV === 'development',
+});
+
+// ============================================================
+// 🗄️ IN-MEMORY CACHE — Reduce DB hits for static data
+// ============================================================
+const cache = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function getCached(key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCache(key, data) {
+  cache.set(key, { data, timestamp: Date.now() });
+}
+
 // Supabase Admin Client (Needed for identity masking and moderation)
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-app.post('/api/auth/mask', async (req, res) => {
+app.post('/api/auth/mask', maskLimiter, async (req, res) => {
   const { userId } = req.body;
   console.log(`[BACKEND] Mask request received for user: ${userId}`);
   
@@ -56,7 +111,7 @@ app.post('/api/auth/mask', async (req, res) => {
 });
 
 // 0. CUSTOM AUTH SYSTEM (No Email / No Rate Limit)
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   const { username, password } = req.body;
   
   if (!username || !password) {
@@ -101,7 +156,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { username, password } = req.body;
   
   if (!username || !password) {
@@ -146,6 +201,26 @@ app.post('/api/auth/login', async (req, res) => {
   } catch (err) {
     console.error('[AUTH] Login error:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/users/search?q=query
+// Securely search for users by username without exposing maskIds
+app.get('/api/users/search', async (req, res) => {
+  const { q } = req.query;
+  if (!q || q.length < 2) return res.json([]);
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('user_accounts')
+      .select('username')
+      .ilike('username', `%${q}%`)
+      .limit(10);
+
+    if (error) throw error;
+    res.json(data.map(u => u.username));
+  } catch (err) {
+    res.status(500).json({ error: 'Search failed' });
   }
 });
 
@@ -262,8 +337,199 @@ app.post('/api/channels', async (req, res) => {
   }
 });
 
+// ============================================================
+// 📱 WhatsApp-Style Private Groups
+// ============================================================
+
+app.get('/api/groups/private', async (req, res) => {
+  const { maskId } = req.query;
+  if (!maskId) return res.status(400).json({ error: 'maskId required' });
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('channel_members')
+      .select('channels(*)')
+      .eq('mask_id', maskId);
+
+    if (error) throw error;
+    
+    // Map out the channels and ensure they look like regular channels
+    const formattedGroups = data.map(d => ({
+      ...d.channels,
+      is_private: true
+    }));
+    
+    res.json(formattedGroups);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/groups', async (req, res) => {
+  const { name, maskId } = req.body;
+  if (!name || !maskId) return res.status(400).json({ error: 'Name and maskId required' });
+  
+  try {
+    // 1. Create channel marking it as private
+    const { data: channel, error: chErr } = await supabaseAdmin
+      .from('channels')
+      .insert([{ 
+        name, 
+        is_private: true, 
+        created_by: maskId, 
+        status: 'active',
+        icon: '🔒'
+      }])
+      .select()
+      .single();
+      
+    if (chErr) throw chErr;
+
+    // 2. Add creator to channel_members
+    await supabaseAdmin
+      .from('channel_members')
+      .insert([{ channel_id: channel.id, mask_id: maskId }]);
+      
+    res.status(201).json(channel);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/groups/:channelId/invite', async (req, res) => {
+  const { channelId } = req.params;
+  const { username, inviterMaskId } = req.body;
+  
+  if (!username || !inviterMaskId) return res.status(400).json({ error: 'Username and inviterMaskId required' });
+  
+  try {
+    // 1. Verify inviter is in the group
+    const { data: memberCheck, error: memErr } = await supabaseAdmin
+      .from('channel_members')
+      .select('*')
+      .eq('channel_id', channelId)
+      .eq('mask_id', inviterMaskId);
+      
+    if (!memberCheck || memberCheck.length === 0) return res.status(403).json({ error: 'Unauthorized to invite' });
+
+    // 2. Resolve target user
+    const { data: targetUser } = await supabaseAdmin
+      .from('user_accounts')
+      .select('id')
+      .ilike('username', username)
+      .single();
+      
+    if (!targetUser) return res.status(404).json({ error: 'User not found' });
+    const targetMaskId = generateAnonymousId(targetUser.id);
+
+    // 3. Check if already a member
+    const { data: alreadyMember } = await supabaseAdmin
+      .from('channel_members')
+      .select('*')
+      .eq('channel_id', channelId)
+      .eq('mask_id', targetMaskId)
+      .single();
+    if (alreadyMember) return res.status(400).json({ error: 'User is already a member' });
+
+    // 4. Create pending invitation
+    const { error: invErr } = await supabaseAdmin
+      .from('group_invitations')
+      .upsert({
+        channel_id: channelId,
+        inviter_mask_id: inviterMaskId,
+        invitee_mask_id: targetMaskId,
+        status: 'pending'
+      }, { onConflict: 'channel_id,invitee_mask_id,status' });
+
+    if (invErr) throw invErr;
+    res.json({ success: true, message: `Invitation sent to ${username}` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/groups/invites', async (req, res) => {
+  const { maskId } = req.query;
+  if (!maskId) return res.status(400).json({ error: 'maskId required' });
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('group_invitations')
+      .select('*, channels(name, icon)')
+      .eq('invitee_mask_id', maskId)
+      .eq('status', 'pending');
+
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/groups/invites/:id/:action', async (req, res) => {
+  const { id, action } = req.params; // action = 'accept' or 'decline'
+  if (!['accept', 'decline'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
+
+  try {
+    const { data: invite, error: fetchErr } = await supabaseAdmin
+      .from('group_invitations')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !invite) return res.status(404).json({ error: 'Invite not found' });
+
+    if (action === 'accept') {
+      // 1. Add to channel_members
+      await supabaseAdmin
+        .from('channel_members')
+        .insert([{ channel_id: invite.channel_id, mask_id: invite.invitee_mask_id }]);
+      
+      // 2. Update status
+      await supabaseAdmin.from('group_invitations').update({ status: 'accepted' }).eq('id', id);
+    } else {
+      await supabaseAdmin.from('group_invitations').update({ status: 'declined' }).eq('id', id);
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 🗄️ STATIC DIRECTORY ENDPOINT — Cached for 5 minutes
+// Serves colleges + categories + channels in one shot.
+// Reduces 3 DB round-trips to 1, cached across all users.
+// ============================================================
+app.get('/api/static/directory', async (req, res) => {
+  const cacheKey = 'static_directory';
+  const cached = getCached(cacheKey);
+  if (cached) return res.json(cached);
+
+  try {
+    const [collRes, catRes, chanRes] = await Promise.all([
+      supabaseAdmin.from('colleges').select('*').order('name'),
+      supabaseAdmin.from('categories').select('*').order('name'),
+      supabaseAdmin.from('channels').select('*').eq('status', 'active').order('name'),
+    ]);
+
+    const directory = {
+      colleges: collRes.data || [],
+      categories: catRes.data || [],
+      channels: chanRes.data || [],
+    };
+
+    setCache(cacheKey, directory);
+    res.json(directory);
+  } catch (err) {
+    console.error('[BACKEND] Static directory error:', err.message);
+    res.status(500).json({ error: 'Failed to load directory' });
+  }
+});
+
 // Route to post a message (Handles the anonymity "Safety Bridge")
-app.post('/api/messages', async (req, res) => {
+app.post('/api/messages', messageRateLimit, async (req, res) => {
   const { userId, content, channelId, replyToId } = req.body;
 
   if (!userId || !content) {
@@ -327,7 +593,7 @@ app.get('/ping', (req, res) => {
   res.json({ status: 'ok', message: 'Backend is connected!' });
 });
 
-// Route to get a profile
+// Route to get a profile by maskId
 app.get('/api/profiles/:maskId', async (req, res) => {
   const { maskId } = req.params;
   if (!maskId || maskId === 'undefined' || maskId === 'null') {
@@ -346,6 +612,26 @@ app.get('/api/profiles/:maskId', async (req, res) => {
     res.json(data || { mask_id: maskId, nickname: 'Anonymous', avatar_url: '' });
   } catch (error) {
     console.error('Profile fetch error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// NEW: Route to get a profile by RAW userId (Hashes internally)
+app.get('/api/profiles/user/:userId', async (req, res) => {
+  const { userId } = req.params;
+  if (!userId) return res.status(400).json({ error: 'User ID required' });
+
+  try {
+    const maskId = generateAnonymousId(userId);
+    const { data, error } = await supabaseAdmin
+      .from('profiles')
+      .select('*, selected_channel:selected_channel_id(id, name, icon, college_id, category_id, categories(college_id))')
+      .eq('mask_id', maskId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw error;
+    res.json(data || { mask_id: maskId, nickname: 'Anonymous', avatar_url: '' });
+  } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -466,6 +752,93 @@ app.post('/api/messages/react', async (req, res) => {
     }
   } catch (error) {
     console.error('[BACKEND] Reaction error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+// ============================================================
+// 🚩 COMMUNITY MODERATION (10-Strike System)
+// ============================================================
+app.post('/api/messages/:id/report', async (req, res) => {
+  const { id } = req.params;
+  const { maskId } = req.body;
+  if (!maskId) return res.status(400).json({ error: 'Mask ID required' });
+
+  try {
+    const { data: msg, error: fetchErr } = await supabaseAdmin
+      .from('messages')
+      .select('reported_by, sender_id')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !msg) return res.status(404).json({ error: 'Message not found' });
+    if (msg.sender_id === maskId) return res.status(400).json({ error: 'Cannot report own message' });
+
+    let reportedBy = msg.reported_by || [];
+    if (reportedBy.includes(maskId)) {
+      return res.status(400).json({ error: 'Already reported' });
+    }
+
+    reportedBy.push(maskId);
+
+    if (reportedBy.length >= 10) {
+      // 10 Strikes -> Auto Delete & Notify
+      await supabaseAdmin.from('messages').delete().eq('id', id);
+      
+      await supabaseAdmin.from('notifications').insert({
+        mask_id: msg.sender_id,
+        message: '🚨 SYSTEM ALERT: Your message was deleted after receiving 10 community reports for violating campus guidelines.'
+      });
+
+      return res.json({ success: true, action: 'deleted' });
+    } else {
+      // Just update report count && flag as reported for standard mods
+      await supabaseAdmin.from('messages').update({ 
+        reported_by: reportedBy,
+        is_reported: true
+      }).eq('id', id);
+      
+      return res.json({ success: true, action: 'reported', count: reportedBy.length });
+    }
+  } catch (error) {
+    console.error('[MODERATION] Report error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================================
+// 🔔 SYSTEM NOTIFICATIONS
+// ============================================================
+app.get('/api/notifications', async (req, res) => {
+  const { maskId } = req.query;
+  if (!maskId) return res.status(400).json({ error: 'Mask ID required' });
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('notifications')
+      .select('*')
+      .eq('mask_id', maskId)
+      .eq('is_read', false);
+      
+    if (error) throw error;
+    res.json(data || []);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/notifications/mark-read', async (req, res) => {
+  const { ids } = req.body;
+  if (!ids || !ids.length) return res.json({ success: true });
+
+  try {
+    const { error } = await supabaseAdmin
+      .from('notifications')
+      .update({ is_read: true })
+      .in('id', ids);
+      
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, StatusBar, Modal } from 'react-native';
 import { supabase } from '../supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
@@ -39,6 +39,9 @@ export default function ProfileScreen({ user, maskId: propMaskId, onBack, onGrou
   const [colleges, setColleges] = useState([]);
   const [categories, setCategories] = useState([]);
   const [channels, setChannels] = useState([]);
+  const [privateGroups, setPrivateGroups] = useState([]);
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
@@ -51,7 +54,7 @@ export default function ProfileScreen({ user, maskId: propMaskId, onBack, onGrou
     try {
       const identity = propMaskId || user.id; // Fallback to id if maskId missing
       const [profRes, collRes, catRes, chanRes, storedGroup] = await Promise.all([
-        axios.get(`${BACKEND_URL}/api/profiles/${identity}`).catch(() => ({ data: null })),
+        axios.get(`${BACKEND_URL}/api/profiles/user/${identity}`).catch(() => ({ data: null })),
         supabase.from('colleges').select('*').order('name'),
         supabase.from('categories').select('*').order('name'),
         supabase.from('channels').select('*').order('name'),
@@ -59,9 +62,17 @@ export default function ProfileScreen({ user, maskId: propMaskId, onBack, onGrou
       ]);
 
       // Only metadata now
+      const myMaskId = profRes.data?.mask_id || '';
       if (profRes.data) {
-        setMaskId(profRes.data.mask_id || '');
+        setMaskId(myMaskId);
       }
+
+      let pGroups = [];
+      if (myMaskId) {
+        const privRes = await axios.get(`${BACKEND_URL}/api/groups/private?maskId=${myMaskId}`).catch(() => ({ data: [] }));
+        pGroups = privRes.data || [];
+      }
+      setPrivateGroups(pGroups);
 
       setColleges(collRes.data || []);
       setCategories(catRes.data || []);
@@ -100,6 +111,38 @@ export default function ProfileScreen({ user, maskId: propMaskId, onBack, onGrou
   };
 
   // --- Change Class Flow ---
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim()) {
+      showAlert('Required', 'Group name cannot be empty.', 'info');
+      return;
+    }
+    setLoading(true);
+    try {
+      const { data } = await axios.post(`${BACKEND_URL}/api/groups`, {
+        name: newGroupName.trim(),
+        maskId: maskId
+      });
+      setPrivateGroups(prev => [data, ...prev]);
+      setIsCreatingGroup(false);
+      setNewGroupName('');
+      
+      const channelData = {
+        collegeId: null,
+        categoryId: null,
+        channel: { id: data.id, name: data.name, icon: data.icon, is_private: true },
+      };
+      await AsyncStorage.setItem(SELECTED_GROUP_KEY, JSON.stringify(channelData));
+      onGroupChanged(data);
+      setSavedChannel(data);
+      setStep(1);
+      showAlert('Success', `Group '${data.name}' created and joined!`, 'success');
+    } catch (err) {
+      showAlert('Error', err.response?.data?.error || 'Failed to create group.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSelectCollege = async (college) => {
     const { data: channelData, error } = await supabase.from('channels').select('*').eq('college_id', college.id).eq('status', 'active').single();
     if (error || !channelData) {
@@ -194,6 +237,11 @@ export default function ProfileScreen({ user, maskId: propMaskId, onBack, onGrou
               <View style={styles.chevronBox}><Text style={styles.chevron}>›</Text></View>
             </TouchableOpacity>
           )}
+          <TouchableOpacity style={[styles.optionCard, { borderColor: '#10B981', backgroundColor: '#ECFDF5' }]} onPress={() => setStep(5)}>
+            <View style={[styles.optionIconBox, { backgroundColor: '#10B981' }]}><Text style={styles.optionEmoji}>🔒</Text></View>
+            <View style={{ flex: 1 }}><Text style={[styles.optionName, { color: '#047857' }]}>My Private Groups</Text></View>
+            <View style={styles.chevronBox}><Text style={styles.chevron}>›</Text></View>
+          </TouchableOpacity>
           {colleges.map((college, i) => (
             <TouchableOpacity key={college.id} style={styles.optionCard} onPress={() => handleSelectCollege(college)}>
               <View style={[styles.optionIconBox, { backgroundColor: COLLEGE_COLORS[i % COLLEGE_COLORS.length] }]}><Text style={styles.optionEmoji}>{college.icon}</Text></View>
@@ -246,7 +294,47 @@ export default function ProfileScreen({ user, maskId: propMaskId, onBack, onGrou
           })}
         </ScrollView>
         {selectedChannel && (
-          <TouchableOpacity style={styles.finishBtn} onPress={saveNewClass}><Text style={styles.finishBtnText}>Change to {selectedChannel.name}</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.finishBtn} onPress={handleFinish}><Text style={styles.finishBtnText}>Change to {selectedChannel.name}</Text></TouchableOpacity>
+        )}
+      </View>
+    );
+  }
+
+  if (step === 5) {
+    return (
+      <View style={styles.page}>
+        <TouchableOpacity onPress={() => setStep(2)} style={styles.backBtn}><Text style={styles.backBtnText}>← Back</Text></TouchableOpacity>
+        <Text style={styles.stepHeading}>My Private Groups</Text>
+        <Text style={styles.stepSub}>Chat privately with your friends</Text>
+        
+        <TouchableOpacity style={[styles.optionCard, { borderColor: '#6366F1', borderStyle: 'dashed', borderWidth: 2, backgroundColor: '#FAFAFA' }]} onPress={() => setIsCreatingGroup(true)}>
+          <View style={[styles.optionIconBox, { backgroundColor: '#E0E7FF' }]}><Text style={styles.optionEmoji}>➕</Text></View>
+          <View style={{ flex: 1 }}><Text style={[styles.optionName, { color: '#4F46E5' }]}>Create New Group</Text></View>
+        </TouchableOpacity>
+
+        <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 16 }}>
+          {privateGroups.map((g, i) => {
+            const isSelected = selectedChannel?.id === g.id;
+            return (
+              <TouchableOpacity key={g.id} style={[styles.optionCard, isSelected && styles.optionCardSelected]} onPress={() => setSelectedChannel(g)}>
+                <View style={[styles.optionIconBox, { backgroundColor: isSelected ? '#6366F1' : '#10B981' }]}><Text style={styles.optionEmoji}>{g.icon}</Text></View>
+                <View style={{ flex: 1 }}><Text style={[styles.optionName, isSelected && { color: '#4338CA' }]}>{g.name}</Text></View>
+                {isSelected ? <View style={styles.checkBox}><Text style={styles.checkMark}>✓</Text></View> : <View style={styles.chevronBox}><Text style={styles.chevron}>›</Text></View>}
+              </TouchableOpacity>
+            );
+          })}
+          {privateGroups.length === 0 && <Text style={{ marginTop: 20, color: '#9CA3AF', textAlign: 'center' }}>You haven't joined any private groups yet.</Text>}
+        </ScrollView>
+        {selectedChannel && selectedChannel.is_private && (
+          <TouchableOpacity style={styles.finishBtn} onPress={async () => {
+            setLoading(true);
+            const channelData = { collegeId: null, categoryId: null, channel: { id: selectedChannel.id, name: selectedChannel.name, icon: selectedChannel.icon, is_private: true } };
+            await AsyncStorage.setItem(SELECTED_GROUP_KEY, JSON.stringify(channelData));
+            onGroupChanged(selectedChannel);
+            setSavedChannel(selectedChannel);
+            setStep(1);
+            setLoading(false);
+          }}><Text style={styles.finishBtnText}>Enter {selectedChannel.name}</Text></TouchableOpacity>
         )}
       </View>
     );
@@ -254,6 +342,30 @@ export default function ProfileScreen({ user, maskId: propMaskId, onBack, onGrou
 
   return (
     <View style={{ flex: 1 }}>
+      <Modal visible={isCreatingGroup} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.promptCard}>
+            <Text style={styles.promptTitle}>Create Private Group</Text>
+            <Text style={styles.promptSub}>Give your new group a name.</Text>
+            <TextInput
+              style={styles.promptInput}
+              placeholder="e.g. Study Squad"
+              value={newGroupName}
+              onChangeText={setNewGroupName}
+              autoFocus
+            />
+            <View style={styles.promptActions}>
+              <TouchableOpacity style={styles.promptBtnCancel} onPress={() => setIsCreatingGroup(false)}>
+                <Text style={styles.promptBtnCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.promptBtnSubmit} onPress={handleCreateGroup}>
+                {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.promptBtnSubmitText}>Create</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
         <StatusBar barStyle="dark-content" backgroundColor="#F8F9FA" />
         {/* Header */}
