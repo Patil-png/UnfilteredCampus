@@ -57,16 +57,17 @@ const LoginScreen = ({ onLoginSuccess, initialMode = 'signup' }) => {
 
   const styles = {
     container: {
-      minHeight: '100vh',
+      minHeight: '100dvh', // Modern dynamic viewport height
       backgroundColor: '#0F172A',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'center',
       position: 'relative',
-      overflow: 'hidden',
-      padding: '24px',
+      overflowY: 'auto', // Allow scrolling for long forms
+      padding: '40px 24px', // More vertical padding
       fontFamily: '"Outfit", sans-serif',
+      WebkitOverflowScrolling: 'touch',
     },
     orb: {
       position: 'absolute',
@@ -143,8 +144,21 @@ const LoginScreen = ({ onLoginSuccess, initialMode = 'signup' }) => {
       marginTop: '12px'
     },
     ctaBtnDisabled: { opacity: 0.5, cursor: 'not-allowed', filter: 'grayscale(0.5)' },
-    toggleBtn: { backgroundColor: 'transparent', border: 'none', color: '#94A3B8', fontWeight: '600', fontSize: '14px', cursor: 'pointer', marginTop: '32px', textAlign: 'center' },
-    footer: { position: 'absolute', bottom: '32px', fontSize: '11px', color: '#475569', fontWeight: '700', letterSpacing: '2px', textAlign: 'center', width: '100%', pointerEvents: 'none' }
+    toggleBtn: { 
+      backgroundColor: 'rgba(255, 255, 255, 0.05)', 
+      border: '1px solid rgba(255, 255, 255, 0.1)', 
+      borderRadius: '16px',
+      padding: '12px 24px',
+      color: '#94A3B8', 
+      fontWeight: '600', 
+      fontSize: '14px', 
+      cursor: 'pointer', 
+      marginTop: '24px', 
+      textAlign: 'center',
+      width: '100%',
+      transition: 'all 0.2s'
+    },
+    footer: { position: 'relative', marginTop: '48px', marginBottom: '24px', fontSize: '11px', color: '#475569', fontWeight: '700', letterSpacing: '2px', textAlign: 'center', width: '100%', pointerEvents: 'none' }
   };
 
   return (

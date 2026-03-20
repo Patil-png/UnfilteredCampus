@@ -12,14 +12,19 @@ self.addEventListener('activate', (event) => {
 
 // Fetch event - Network first strategy for everything
 self.addEventListener('fetch', (event) => {
-  // We don't want to handle WebSockets or other protocols
-  if (!event.request.url.startsWith('http')) return;
+  const url = event.request.url;
+
+  // 1. Bypass ServiceWorker for API calls, WebSockets, etc.
+  if (!url.startsWith('http') || url.includes('/api/') || url.includes('api.')) {
+    return; // Let the browser handle this naturally
+  }
 
   event.respondWith(
     fetch(event.request)
-      .catch(() => {
-        // Fallback or just let it fail naturally if offline
-        return caches.match(event.request);
+      .catch(async () => {
+        const cache = await caches.open(CACHE_NAME);
+        const cachedResponse = await cache.match(event.request);
+        return cachedResponse || new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
       })
   );
 });

@@ -1,14 +1,14 @@
 import React from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { AlertCircle, CheckCircle2, Info, HelpCircle } from 'lucide-react';
 
 const CustomAlert = ({ visible, title, message, type, onClose, onConfirm, confirmText = 'OK', cancelText = 'Cancel' }) => {
-  if (!visible) return null;
-
   const getColors = () => {
     switch (type) {
-      case 'error': return { bg: '#FEF2F2', border: '#FCA5A5', text: '#991B1B', btn: '#EF4444' };
-      case 'success': return { bg: '#F0FDF4', border: '#86EFAC', text: '#166534', btn: '#10B981' };
-      case 'confirm': return { bg: '#EEF2FF', border: '#A5B4FC', text: '#3730A3', btn: '#6366F1' };
-      default: return { bg: '#F8FAFC', border: '#E2E8F0', text: '#1E293B', btn: '#6366F1' };
+      case 'error': return { themeLine: '#EF4444', icon: <AlertCircle size={48} color="#EF4444" /> };
+      case 'success': return { themeLine: '#10B981', icon: <CheckCircle2 size={48} color="#10B981" /> };
+      case 'confirm': return { themeLine: '#6366F1', icon: <HelpCircle size={48} color="#6366F1" /> };
+      default: return { themeLine: '#94A3B8', icon: <Info size={48} color="#94A3B8" /> };
     }
   };
 
@@ -18,36 +18,42 @@ const CustomAlert = ({ visible, title, message, type, onClose, onConfirm, confir
     overlay: {
       position: 'fixed',
       top: 0, left: 0, right: 0, bottom: 0,
-      backgroundColor: 'rgba(0,0,0,0.5)',
+      backgroundColor: 'rgba(0, 0, 0, 0.7)',
+      backdropFilter: 'blur(12px)',
       display: 'flex',
       justifyContent: 'center',
       alignItems: 'center',
-      zIndex: 1000,
-      backdropFilter: 'blur(4px)',
+      zIndex: 2000,
+      padding: '24px',
     },
     card: {
-      backgroundColor: '#FFF',
-      borderRadius: '24px',
-      padding: '32px',
-      width: '90%',
-      maxWidth: '400px',
-      boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)',
-      border: `1px solid ${colors.border}`,
+      backgroundColor: 'rgba(30, 41, 59, 0.8)',
+      backdropFilter: 'blur(20px)',
+      borderRadius: '32px',
+      padding: '40px',
+      width: '100%',
+      maxWidth: '420px',
+      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+      border: '1px solid rgba(255, 255, 255, 0.1)',
       textAlign: 'center',
+      position: 'relative',
+      overflow: 'hidden',
     },
     title: {
-      fontSize: '20px',
+      fontSize: '24px',
       fontWeight: '900',
-      color: colors.text,
+      color: '#FFF',
       marginBottom: '12px',
       letterSpacing: '-0.5px',
+      fontFamily: '"Outfit", sans-serif',
     },
     message: {
-      fontSize: '15px',
-      color: '#64748B',
+      fontSize: '16px',
+      color: '#94A3B8',
       lineHeight: '1.6',
-      marginBottom: '24px',
+      marginBottom: '32px',
       fontWeight: '500',
+      fontFamily: '"Outfit", sans-serif',
     },
     actions: {
       display: 'flex',
@@ -55,50 +61,91 @@ const CustomAlert = ({ visible, title, message, type, onClose, onConfirm, confir
       justifyContent: 'center',
     },
     btn: {
-      padding: '12px 24px',
-      borderRadius: '12px',
-      fontSize: '14px',
+      flex: 1,
+      height: '56px',
+      borderRadius: '16px',
+      fontSize: '16px',
       fontWeight: '800',
       cursor: 'pointer',
       border: 'none',
       transition: 'all 0.2s',
+      fontFamily: '"Outfit", sans-serif',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     btnPrimary: {
-      backgroundColor: colors.btn,
+      backgroundColor: colors.themeLine,
       color: '#FFF',
+      boxShadow: `0 8px 16px -4px ${colors.themeLine}44`,
     },
     btnCancel: {
-      backgroundColor: '#F1F5F9',
-      color: '#475569',
+      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+      color: '#94A3B8',
+      border: '1px solid rgba(255, 255, 255, 0.1)',
     }
   };
 
   return (
-    <div style={styles.overlay} onClick={onClose}>
-      <div style={styles.card} onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize: '40px', marginBottom: '16px' }}>
-          {type === 'error' ? '🚫' : type === 'success' ? '✅' : type === 'confirm' ? '⚠️' : '👋'}
-        </div>
-        <h3 style={styles.title}>{title}</h3>
-        <p style={styles.message}>{message}</p>
-        <div style={styles.actions}>
-          {type === 'confirm' && (
-            <button style={{ ...styles.btn, ...styles.btnCancel }} onClick={onClose}>
-              {cancelText}
-            </button>
-          )}
-          <button 
-            style={{ ...styles.btn, ...styles.btnPrimary }} 
-            onClick={() => {
-              if (onConfirm) onConfirm();
-              onClose();
-            }}
+    <AnimatePresence>
+      {visible && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          style={styles.overlay}
+          onClick={onClose}
+        >
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0, y: 20 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.9, opacity: 0, y: 20 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            style={styles.card} 
+            onClick={e => e.stopPropagation()}
           >
-            {confirmText}
-          </button>
-        </div>
-      </div>
-    </div>
+            {/* Top Accent Line */}
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '4px', backgroundColor: colors.themeLine }} />
+            
+            <motion.div 
+              initial={{ rotate: -10, scale: 0.8 }}
+              animate={{ rotate: 0, scale: 1 }}
+              transition={{ delay: 0.1 }}
+              style={{ marginBottom: '24px' }}
+            >
+              {colors.icon}
+            </motion.div>
+
+            <h3 style={styles.title}>{title}</h3>
+            <p style={styles.message}>{message}</p>
+            
+            <div style={styles.actions}>
+              {type === 'confirm' && (
+                <motion.button 
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  style={{ ...styles.btn, ...styles.btnCancel }} 
+                  onClick={onClose}
+                >
+                  {cancelText}
+                </motion.button>
+              )}
+              <motion.button 
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                style={{ ...styles.btn, ...styles.btnPrimary }} 
+                onClick={() => {
+                  if (onConfirm) onConfirm();
+                  onClose();
+                }}
+              >
+                {confirmText}
+              </motion.button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };
 
