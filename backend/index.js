@@ -207,6 +207,49 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   }
 });
 
+// DELETE /api/auth/account/:userId
+// Permanently delete user account and associated profile
+app.delete('/api/auth/account/:userId', authLimiter, async (req, res) => {
+  const { userId } = req.params;
+  if (!userId) return res.status(400).json({ error: 'User ID required' });
+
+  try {
+    const maskId = generateAnonymousId(userId);
+    
+    console.log(`[🗑️ AUTH] Starting Scrub for User ${userId} (Ghost: ${maskId})`);
+
+    // 1. Scrub Associated Data (Prevent FK constraints)
+    await Promise.all([
+      supabaseAdmin.from('voter_responses').delete().eq('voter_id', maskId),
+      supabaseAdmin.from('polls').delete().eq('creator_id', maskId),
+      supabaseAdmin.from('messages').delete().eq('sender_id', maskId),
+      supabaseAdmin.from('group_invites').delete().eq('inviter_id', maskId),
+      supabaseAdmin.from('group_invites').delete().eq('invitee_id', maskId),
+      supabaseAdmin.from('private_group_members').delete().eq('mask_id', maskId),
+    ]);
+
+    // 2. Delete profile from Supabase
+    await supabaseAdmin
+      .from('profiles')
+      .delete()
+      .eq('mask_id', maskId);
+
+    // 3. Delete user from local database
+    const { error: userError } = await supabaseAdmin
+      .from('user_accounts')
+      .delete()
+      .eq('id', userId);
+
+    if (userError) throw userError;
+
+    console.log(`[🗑️ AUTH] Account CLEANSED: ${userId}`);
+    res.json({ message: 'Account permanently deleted' });
+  } catch (err) {
+    console.error('[AUTH] Deletion error:', err);
+    res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
 // GET /api/users/search?q=query
 // Securely search for users by username without exposing maskIds
 app.get('/api/users/search', async (req, res) => {
@@ -246,7 +289,6 @@ app.post('/api/auth/delete', async (req, res) => {
     
     if (accError) throw accError;
     console.log(`   - Accounts scrubbed: ${accCount || 0}`);
-
     // 2. Delete profile (anonymized data)
     const { count: profCount } = await supabaseAdmin
       .from('profiles')
@@ -594,6 +636,34 @@ app.post('/api/messages', messageRateLimit, async (req, res) => {
 // Health check / connectivity check
 app.get('/ping', (req, res) => {
   res.json({ status: 'ok', message: 'Backend is connected!' });
+});
+
+// POST /api/profiles/select-group
+// Used to persist the user's selected campus context
+app.post('/api/profiles/select-group', async (req, res) => {
+  const { userId, collegeId, categoryId, channelId } = req.body;
+  if (!userId || !channelId) {
+    return res.status(400).json({ error: 'Missing userId or channelId' });
+  }
+
+  try {
+    const maskId = generateAnonymousId(userId);
+    await supabaseAdmin
+      .from('profiles')
+      .update({
+        selected_college_id: collegeId,
+        selected_category_id: categoryId,
+        selected_channel_id: channelId,
+        last_seen: new Date().toISOString()
+      })
+      .eq('mask_id', maskId);
+
+    console.log(`[👤 PROFILE] Group Selected: User ${userId} -> Channel ${channelId}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[PROFILE] Group selection error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Route to get a profile by maskId

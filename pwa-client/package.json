@@ -1,5 +1,5 @@
 {
-  "name": "web-client",
+  "name": "pwa-client",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,8 +10,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.99.3",
+    "axios": "^1.13.6",
+    "canvas-confetti": "^1.9.4",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^0.577.0",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "react-router-dom": "^7.13.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
