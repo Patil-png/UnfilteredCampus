@@ -89,23 +89,30 @@ function getHomoglyphPattern(char) {
 function deepClean(text) {
   if (!text) return text;
 
+  // Protect URLs from being cleaned
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const urls = [];
+  let placeholderText = text.replace(urlRegex, (match) => {
+    const placeholder = `__URL_PLACEHOLDER_${urls.length}__`;
+    urls.push(match);
+    return placeholder;
+  });
+
   // We work on a copy to accumulate stars, then pass to bad-words filter
-  let cleanedOutput = text;
+  let cleanedOutput = placeholderText;
 
   // Step 1: Heuristic Bypass Detection (Power up)
-  const normalizedMessage = normalizeText(text);
+  const normalizedMessage = normalizeText(placeholderText);
 
   BLACKLIST.forEach((word, index) => {
     const normalizedWord = NORMALIZED_BLACKLIST[index];
     
     // Check if the word exists in the normalized message
     if (normalizedWord && normalizedMessage.includes(normalizedWord)) {
-      // Create a regex to find the word even with variations
-      // We escape the word characters. We remove non-alphanumeric from the word itself for the pattern.
       const pattern = word.replace(/[^a-z0-9]/gi, '')
         .split('')
         .map(char => getHomoglyphPattern(char))
-        .join('[^a-z]*?'); // Allow any non-letter (dots, numbers, symbols) between letters
+        .join('[^a-z]*?');
         
       const regex = new RegExp(pattern, 'gi');
       cleanedOutput = cleanedOutput.replace(regex, (match) => '*'.repeat(match.length));
@@ -113,15 +120,20 @@ function deepClean(text) {
   });
 
   // Step 2: Standard dictionary cleaning as fallback
-  // Safety: bad-words crashes if the string is all stars or has no word characters
   try {
     if (/[a-z0-9]/i.test(cleanedOutput)) {
-      return filter.clean(cleanedOutput);
+      cleanedOutput = filter.clean(cleanedOutput);
     }
-    return cleanedOutput;
   } catch (e) {
-    return cleanedOutput;
+    // Keep cleanedOutput as is
   }
+
+  // Restore URLs
+  urls.forEach((url, i) => {
+    cleanedOutput = cleanedOutput.replace(`__URL_PLACEHOLDER_${i}__`, url);
+  });
+
+  return cleanedOutput;
 }
 
 module.exports = { deepClean };

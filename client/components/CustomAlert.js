@@ -19,8 +19,8 @@ const { width } = Dimensions.get('window');
  */
 export default function CustomAlert({ 
   visible, title, message, type = 'info', 
-  onClose, onConfirm, 
-  confirmText = 'OK', cancelText = 'Cancel' 
+  onClose, onConfirm, onExtra,
+  confirmText = 'OK', cancelText = 'Cancel', extraText = ''
 }) {
   const [scale] = React.useState(new Animated.Value(0.8));
   const [opacity] = React.useState(new Animated.Value(0));
@@ -84,8 +84,18 @@ export default function CustomAlert({
               </TouchableOpacity>
             )}
             
+            {extraText ? (
+              <TouchableOpacity 
+                style={[styles.btn, { backgroundColor: '#F3F4F6', marginRight: 10 }]} 
+                onPress={onExtra}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.btnText, { color: '#6B7280' }]}>{extraText}</Text>
+              </TouchableOpacity>
+            ) : null}
+
             <TouchableOpacity 
-              style={[styles.btn, { backgroundColor: getThemeColor() }, isConfirm && { flex: 1, marginLeft: 10 }]} 
+              style={[styles.btn, { backgroundColor: getThemeColor() }, (isConfirm || extraText) && { flex: 1, marginLeft: extraText ? 0 : 10 }]} 
               onPress={isConfirm ? onConfirm : (onConfirm || onClose)}
               activeOpacity={0.8}
             >

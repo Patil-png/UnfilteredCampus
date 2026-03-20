@@ -98,7 +98,7 @@ CREATE TABLE public.polls (
 CREATE TABLE public.poll_votes (
     id UUID DEFAULT extensions.uuid_generate_v4() PRIMARY KEY,
     poll_id UUID REFERENCES public.polls(id) ON DELETE CASCADE,
-    mask_id TEXT NOT NULL,
+    mask_id TEXT NOT NULL REFERENCES public.profiles(mask_id) ON DELETE CASCADE,
     option_index INTEGER NOT NULL,
     created_at TIMESTAMPTZ DEFAULT now(),
     UNIQUE(poll_id, mask_id)
@@ -178,3 +178,11 @@ CREATE POLICY "banned_insert" ON public.banned_hashes FOR INSERT WITH CHECK (tru
 -- DONE. Database is now clean and ready.
 -- Next: Add colleges from Admin Panel > College Manager
 -- ============================================================
+-- Message deletions (Delete for Me)
+CREATE TABLE public.message_deletions (
+    id UUID DEFAULT extensions.uuid_generate_v4() PRIMARY KEY,
+    message_id BIGINT REFERENCES public.messages(id) ON DELETE CASCADE,
+    mask_id TEXT REFERENCES public.profiles(mask_id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(message_id, mask_id)
+);

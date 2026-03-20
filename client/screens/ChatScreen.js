@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, FlatList, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActionSheetIOS, StatusBar, Modal, ScrollView, Animated, PanResponder, Dimensions, ActivityIndicator, Clipboard } from 'react-native';
-import { Swipeable } from 'react-native-gesture-handler';
+import { View, Text, TextInput, FlatList, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActionSheetIOS, StatusBar, Modal, ScrollView, Animated, PanResponder, Dimensions, ActivityIndicator, Clipboard, Linking } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
+import { Swipeable, TapGestureHandler, State } from 'react-native-gesture-handler';
 import axios from 'axios';
 import * as Application from 'expo-application';
+import * as Haptics from 'expo-haptics';
 import { supabase } from '../supabaseClient';
 import CustomAlert from '../components/CustomAlert';
 
@@ -80,11 +82,12 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
   // Custom Alert State
   const [alert, setAlert] = useState({
     visible: false, title: '', message: '', type: 'info',
-    onConfirm: null, confirmText: 'OK', cancelText: 'Cancel'
+    onConfirm: null, confirmText: 'OK', cancelText: 'Cancel',
+    extraText: '', onExtra: null
   });
 
-  const showAlert = (title, message, type = 'info', onConfirm = null, confirmText = 'OK', cancelText = 'Cancel') => {
-    setAlert({ visible: true, title, message, type, onConfirm, confirmText, cancelText });
+  const showAlert = (title, message, type = 'info', onConfirm = null, confirmText = 'OK', cancelText = 'Cancel', onExtra = null, extraText = '') => {
+    setAlert({ visible: true, title, message, type, onConfirm, confirmText, cancelText, onExtra, extraText });
   };
 
   // Bottom Sheet Animation
@@ -167,13 +170,27 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
         schema: 'public',
         table: 'messages',
         filter: channelId ? `channel_id=eq.${channelId}` : undefined,
-      }, () => fetchMessages())
+      }, async (payload) => {
+        // WhatsApp style: Add new message to the top (prevents losing scroll/history)
+        if (payload.new) {
+          // Fetch full row with nickname joined
+          const { data: fullDraft } = await supabase
+            .from('messages')
+            .select('*, profiles:sender_id(nickname), message_reactions(*), message_deletions!left(mask_id)')
+            .eq('id', payload.new.id)
+            .single();
+          
+          if (fullDraft) {
+            setMessages(prev => [fullDraft, ...prev]);
+          }
+        }
+      })
       .on('postgres_changes', {
         event: 'UPDATE',
         schema: 'public',
         table: 'messages',
         filter: channelId ? `channel_id=eq.${channelId}` : undefined,
-      }, () => fetchMessages())
+      }, () => fetchMessages()) // On update (edit/delete) we can refetch first page
       .subscribe();
 
     // Subscribe to reactions
@@ -264,13 +281,15 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
 
       const { data, error } = await supabase
         .from('messages')
-        .select('*, profiles:sender_id(nickname), message_reactions(*)')
+        .select('*, profiles:sender_id(nickname), message_reactions(*), message_deletions!left(mask_id)')
         .eq('channel_id', channel.id)
         .order('created_at', { ascending: false })
         .range(from, to);
 
       if (error) throw error;
-      const fetched = data || [];
+      
+      // Filter out messages deleted for me
+      const fetched = (data || []).filter(m => !m.message_deletions?.some(d => d.mask_id === maskId));
       if (append) {
         setMessages(prev => [...prev, ...fetched]); // Append older messages
       } else {
@@ -299,15 +318,50 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
   };
 
 
-  const deleteMessage = async (msgId) => {
+  const deleteMessage = (msgId, isMe) => {
+    if (isMe) {
+      showAlert(
+        'Delete Message',
+        'Would you like to delete this message for everyone or just for you?',
+        'confirm',
+        () => deleteForEveryone(msgId),
+        'FOR EVERYONE',
+        'CANCEL',
+        () => deleteForMe(msgId),
+        'FOR ME'
+      );
+    } else {
+      showAlert(
+        'Delete Message',
+        'Delete this message for you?',
+        'confirm',
+        () => deleteForMe(msgId),
+        'DELETE',
+        'CANCEL'
+      );
+    }
+  };
+
+  const deleteForEveryone = async (msgId) => {
+    setAlert(prev => ({ ...prev, visible: false }));
     try {
       const { error } = await supabase.from('messages').delete().eq('id', msgId).eq('sender_id', maskId);
       if (error) throw error;
       setMessages(prev => prev.filter(m => m.id !== msgId));
-      showAlert('Deleted', 'Message was deleted successfully.', 'success');
+      showAlert('Deleted', 'Message deleted for everyone.', 'success');
     } catch (err) {
-      console.error(err);
-      showAlert('Error', 'Could not delete the message.', 'error');
+      showAlert('Error', 'Could not delete for everyone.', 'error');
+    }
+  };
+
+  const deleteForMe = async (msgId) => {
+    setAlert(prev => ({ ...prev, visible: false }));
+    try {
+      await axios.post(`${BACKEND_URL}/api/messages/${msgId}/delete-for-me`, { maskId });
+      setMessages(prev => prev.filter(m => m.id !== msgId));
+      showAlert('Deleted', 'Message deleted for you.', 'success');
+    } catch (err) {
+      showAlert('Error', 'Could not delete for you.', 'error');
     }
   };
 
@@ -376,17 +430,39 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
   };
 
   const toggleReaction = async (msgId, emoji) => {
-    setSelectedMsgForReaction(null); // Close floating picker
-    closeSheet();                    // Close full picker with animation
+    setSelectedMsgForReaction(null);
+    closeSheet();
+
+    // Optimistic Update
+    setMessages(prev => prev.map(m => {
+      if (m.id === msgId) {
+        const existing = m.message_reactions || [];
+        const userReacted = existing.some(r => r.emoji === emoji && r.mask_id === maskId);
+        
+        let updatedReactions;
+        if (userReacted) {
+          // Remove
+          updatedReactions = existing.filter(r => !(r.emoji === emoji && r.mask_id === maskId));
+        } else {
+          // Add
+          updatedReactions = [...existing, { emoji, mask_id: maskId, is_optimistic: true }];
+        }
+        return { ...m, message_reactions: updatedReactions };
+      }
+      return m;
+    }));
+
     try {
       await axios.post(`${BACKEND_URL}/api/messages/react`, {
         userId: deviceId || user.id,
         messageId: msgId,
         emoji: emoji
       });
-      fetchMessages();
+      // Realtime subscription will eventually sync the final state from DB
     } catch (error) {
       console.error('[CHAT] React error:', error);
+      // Rollback on error
+      fetchMessages();
     }
   };
 
@@ -421,6 +497,28 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
         }
       },
       'REPORT',
+      'CANCEL'
+    );
+  };
+
+  const deletePoll = async (pollId) => {
+    showAlert(
+      'Delete Poll',
+      'Are you sure you want to delete this poll? This action cannot be undone.',
+      'confirm',
+      async () => {
+        setAlert(prev => ({ ...prev, visible: false }));
+        try {
+          await axios.delete(`${BACKEND_URL}/api/polls/${pollId}`, {
+            data: { maskId }
+          });
+          setPolls(prev => prev.filter(p => p.id !== pollId));
+          showAlert('Deleted', 'Poll has been deleted.', 'success');
+        } catch (err) {
+          showAlert('Error', err.response?.data?.error || 'Failed to delete poll', 'error');
+        }
+      },
+      'DELETE',
       'CANCEL'
     );
   };
@@ -506,6 +604,40 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
     setNewPollOptions(updated);
   };
 
+  const renderLinkifiedText = (text, isMe) => {
+    if (!text) return null;
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const parts = text.split(urlRegex);
+    
+    return parts.map((part, i) => {
+      if (part.match(urlRegex)) {
+        return (
+          <Text
+            key={i}
+            style={[styles.linkText, isMe ? styles.selfLink : styles.nodeLink]}
+            onPress={async () => {
+              try {
+                await WebBrowser.openBrowserAsync(part);
+              } catch (err) {
+                Linking.openURL(part);
+              }
+            }}
+          >
+            {part}
+          </Text>
+        );
+      }
+      return part;
+    });
+  };
+
+  const combinedItems = [
+    ...polls.map(p => ({ ...p, isPoll: true })),
+    ...messages.filter(m => 
+      !searchQuery || m.content?.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
@@ -577,18 +709,12 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
           >
             <FlatList
               ref={flatListRef}
-              data={[
-                ...polls.map(p => ({ ...p, isPoll: true })),
-                ...messages.filter(m => 
-                  !searchQuery || m.content?.toLowerCase().includes(searchQuery.toLowerCase())
-                )
-              ]}
-              keyExtractor={(item) => item.id.toString()}
+              data={combinedItems}
+              keyExtractor={(item) => item.isPoll ? `poll-${item.id}` : item.id.toString()}
               inverted
               contentContainerStyle={{ paddingVertical: 20 }}
               scrollEnabled={!selectedMsgForReaction}
               onScroll={(e) => {
-                // In inverted list, offset 0 = bottom (newest messages)
                 const y = e.nativeEvent.contentOffset.y;
                 setAtBottom(y < 80);
               }}
@@ -614,19 +740,17 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
               )}
               renderItem={({ item, index }) => {
                 const isPoll = !!item.isPoll;
-                const nextMsg = index < messages.length - 1 ? messages[index + 1] : null;
-                const prevMsg = index > 0 ? messages[index - 1] : null;
+                // In inverted list, Visually Above = Higher Index (Older)
+                const nextItem = index < combinedItems.length - 1 ? combinedItems[index + 1] : null;
 
-                const isMe = item.sender_id === maskId;
-
-                // In inverted list, Visually Above = Higher Index
-                // Visually Below = Lower Index
-                const isSameAsAbove = nextMsg && nextMsg.sender_id === item.sender_id;
-                const isSameDateAsAbove = nextMsg && new Date(nextMsg.created_at).toDateString() === new Date(item.created_at).toDateString();
+                const isMe = item.sender_id === maskId || item.creator_id === maskId;
+                
+                // Grouping logic (only for messages)
+                const isSameAsAbove = !isPoll && nextItem && !nextItem.isPoll && nextItem.sender_id === item.sender_id;
+                const isSameDateAsAbove = nextItem && new Date(nextItem.created_at).toDateString() === new Date(item.created_at).toDateString();
                 const isFirstInGroup = !(isSameAsAbove && isSameDateAsAbove);
-
-                const isSameDateAsBelow = prevMsg && new Date(prevMsg.created_at).toDateString() === new Date(item.created_at).toDateString();
-                const showDateHeader = !isSameAsAbove; // Simplification for now, will refine
+                
+                const showDateHeader = !isSameDateAsAbove;
 
                 if (item.isPoll) {
                   const totalVotes = item.poll_votes?.length || 0;
@@ -637,7 +761,14 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
                     <View style={styles.pollWrapper}>
                       <View style={styles.pollCard}>
                         <View style={styles.pollHeader}>
-                          <Text style={styles.pollBadge}>⚡ CAMPUS PULSE</Text>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Text style={styles.pollBadge}>⚡ CAMPUS PULSE</Text>
+                            {item.creator_id === maskId && (
+                              <TouchableOpacity onPress={() => deletePoll(item.id)} style={{ padding: 5 }}>
+                                <Text style={{ color: '#EF4444', fontSize: 16, fontWeight: '800' }}>✕</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
                           <Text style={styles.pollQuestion}>{item.question}</Text>
                         </View>
 
@@ -648,18 +779,19 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
                             const isSelected = userVote?.option_index === index;
 
                             return (
-                              <TouchableOpacity
-                                key={index}
-                                style={[styles.optionBtn, isSelected && styles.optionSelected]}
-                                onPress={() => !userVote && !isExpired && castVote(item.id, index)}
-                                disabled={!!userVote || isExpired}
-                              >
-                                <View style={[styles.optionProgress, { width: `${percentage}%` }]} />
-                                <View style={styles.optionContent}>
-                                  <Text style={[styles.optionText, isSelected && styles.optionTextSelected]}>{option}</Text>
-                                  <Text style={styles.optionPercent}>{percentage}%</Text>
-                                </View>
-                              </TouchableOpacity>
+                              <View key={index} style={{ marginBottom: 10 }}>
+                                <TouchableOpacity
+                                  style={[styles.optionBtn, isSelected && styles.optionSelected]}
+                                  onPress={() => !isExpired && userVote?.option_index !== index && castVote(item.id, index)}
+                                  disabled={isExpired || userVote?.option_index === index}
+                                >
+                                  <View style={[styles.optionProgress, { width: `${percentage}%` }]} />
+                                  <View style={styles.optionContent}>
+                                    <Text style={[styles.optionText, isSelected && styles.optionTextSelected]}>{option}</Text>
+                                    <Text style={styles.optionPercent}>{percentage}%</Text>
+                                  </View>
+                                </TouchableOpacity>
+                              </View>
                             );
                           })}
                         </View>
@@ -683,11 +815,29 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
                   return d.toLocaleDateString([], { day: '2-digit', month: 'long', year: 'numeric' }).toUpperCase();
                 };
 
-                const renderReplyAction = () => (
-                  <View style={{ justifyContent: 'center', alignItems: 'center', width: 60 }}>
-                    <Text style={{ fontSize: 24 }}>↩️</Text>
-                  </View>
-                );
+                const renderReplyAction = (progress, dragX) => {
+                  const scale = dragX.interpolate({
+                    inputRange: [0, 50, 70],
+                    outputRange: [0, 1, 1.1],
+                    extrapolate: 'clamp'
+                  });
+
+                  return (
+                    <View style={{ width: 80, justifyContent: 'center', paddingLeft: 10 }}>
+                      <Animated.View style={{
+                        backgroundColor: '#6366F120',
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        transform: [{ scale }]
+                      }}>
+                        <Text style={{ fontSize: 18, color: '#6366F1' }}>↩️</Text>
+                      </Animated.View>
+                    </View>
+                  );
+                };
 
                 return (
                   <View key={item.id}>
@@ -700,18 +850,36 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
                     )}
                     <Swipeable
                       renderLeftActions={renderReplyAction}
-                      onSwipeableLeftOpen={() => setReplyingTo(item)}
+                      onSwipeableWillOpen={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setReplyingTo(item);
+                      }}
+                      onSwipeableOpen={(direction, swipeable) => {
+                        if (direction === 'left') {
+                          swipeable.close();
+                        }
+                      }}
                       friction={2}
+                      leftThreshold={70}
                     >
-                      <TouchableOpacity
-                        onLongPress={(e) => showReactionPicker(item.id, isMe, e)}
-                        activeOpacity={0.9}
-                        style={[
-                          styles.messageWrapper,
-                          isMe ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' },
-                          !isFirstInGroup && { marginTop: -2 }
-                        ]}
+                      <TapGestureHandler
+                        numberOfTaps={2}
+                        onHandlerStateChange={({ nativeEvent }) => {
+                          if (nativeEvent.state === State.ACTIVE) {
+                            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                            toggleReaction(item.id, '❤️');
+                          }
+                        }}
                       >
+                        <TouchableOpacity
+                          onLongPress={(e) => showReactionPicker(item.id, isMe, e)}
+                          activeOpacity={0.9}
+                          style={[
+                            styles.messageWrapper,
+                            isMe ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' },
+                            !isFirstInGroup && { marginTop: -8 }
+                          ]}
+                        >
                         <View style={[styles.messageRow, isMe && { flexDirection: 'row-reverse' }]}>
                           <View style={[
                             styles.bubbleContainer,
@@ -737,14 +905,14 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
                                       {repliedMsg.sender_id === maskId ? '(YOU)' : (repliedMsg.profiles?.nickname || 'ANONYMOUS')}
                                     </Text>
                                     <Text style={styles.quoteText} numberOfLines={2}>
-                                      {repliedMsg.content}
+                                      {renderLinkifiedText(repliedMsg.content, isMe)}
                                     </Text>
                                   </View>
                                 );
                               })()}
 
                               <Text style={[styles.messageText, isMe ? styles.selfText : styles.nodeText]}>
-                                {item.content}
+                                {renderLinkifiedText(item.content, isMe)}
                               </Text>
 
                               <View style={styles.timeContainer}>
@@ -777,6 +945,7 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
                           </View>
                         </View>
                       </TouchableOpacity>
+                      </TapGestureHandler>
                     </Swipeable>
                   </View>
                 );
@@ -933,19 +1102,16 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
                 <Text style={[styles.actionListText, { color: '#F59E0B' }]}>Report</Text>
               </TouchableOpacity>
 
-              {pickerPosition.isMe && (
-                <>
-                  <View style={styles.actionListDivider} />
-                  <TouchableOpacity style={styles.actionListItem} onPress={() => {
-                    const msgId = selectedMsgForReaction;
-                    setSelectedMsgForReaction(null);
-                    deleteMessage(msgId);
-                  }}>
-                    <Text style={[styles.actionListIcon, { color: '#EF4444' }]}>🗑️</Text>
-                    <Text style={[styles.actionListText, { color: '#EF4444' }]}>Delete</Text>
-                  </TouchableOpacity>
-                </>
-              )}
+              <View style={styles.actionListDivider} />
+              <TouchableOpacity style={styles.actionListItem} onPress={() => {
+                const msgId = selectedMsgForReaction;
+                const isMe = pickerPosition.isMe;
+                setSelectedMsgForReaction(null);
+                deleteMessage(msgId, isMe);
+              }}>
+                <Text style={[styles.actionListIcon, { color: '#EF4444' }]}>🗑️</Text>
+                <Text style={[styles.actionListText, { color: '#EF4444' }]}>Delete</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </TouchableOpacity>
@@ -1110,8 +1276,10 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
         type={alert.type}
         onClose={() => setAlert({ ...alert, visible: false })}
         onConfirm={alert.onConfirm}
+        onExtra={alert.onExtra}
         confirmText={alert.confirmText}
         cancelText={alert.cancelText}
+        extraText={alert.extraText}
       />
     </View>
   );
@@ -1156,15 +1324,15 @@ const styles = StyleSheet.create({
   maskBadgeText: { color: '#6B7280', fontSize: 9, fontWeight: '700', letterSpacing: 0.3 },
 
   // Date Header (Sleek Pill)
-  dateHeader: { alignItems: 'center', marginVertical: 20 },
+  dateHeader: { alignItems: 'center', marginVertical: 12 },
   datePill: { backgroundColor: '#F3F4F6', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20 },
   dateText: { fontSize: 10, color: '#9CA3AF', fontWeight: '800', letterSpacing: 0.5 },
 
   // Message Styles (Modern Pill Bubbles)
-  messageWrapper: { width: '100%', paddingHorizontal: 16, marginVertical: 2 },
-  messageRow: { flexDirection: 'row', alignItems: 'flex-end', maxWidth: '82%' },
+  messageWrapper: { width: '100%', paddingHorizontal: 12, marginVertical: 0.5 },
+  messageRow: { flexDirection: 'row', alignItems: 'flex-end', maxWidth: '85%' },
   bubbleContainer: { position: 'relative' },
-  bubbleHeader: { color: '#6366F1', fontSize: 11, fontWeight: '800', marginLeft: 12, marginBottom: 4, letterSpacing: 0.3 },
+  bubbleHeader: { color: '#6366F1', fontSize: 11, fontWeight: '800', marginLeft: 12, marginBottom: 2, letterSpacing: 0.3 },
 
   bubble: {
     paddingHorizontal: 14,
@@ -1193,17 +1361,26 @@ const styles = StyleSheet.create({
 
   messageText: {
     fontSize: 15,
-    lineHeight: 21,
+    lineHeight: 19,
     fontWeight: '450'
   },
   nodeText: { color: '#1F2937' },
   selfText: { color: '#FFFFFF' },
+  linkText: {
+    textDecorationLine: 'underline',
+  },
+  nodeLink: {
+    color: '#2563EB',
+  },
+  selfLink: {
+    color: '#DBEAFE',
+  },
 
   timeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-end',
-    marginTop: 4,
+    marginTop: 2,
     minWidth: 45,
     justifyContent: 'flex-end',
   },

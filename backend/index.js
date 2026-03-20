@@ -932,28 +932,81 @@ app.post('/api/polls/vote', async (req, res) => {
     const maskId = generateAnonymousId(userId);
 
     // One person, one vote enforced by DB UNIQUE(poll_id, mask_id)
+    // Using upsert allows a user to "change" their vote to a new option
     const { data, error } = await supabaseAdmin
       .from('poll_votes')
-      .insert([
-        { 
-          poll_id: pollId, 
-          mask_id: maskId, 
-          option_index: optionIndex 
-        }
-      ])
+      .upsert({ 
+        poll_id: pollId, 
+        mask_id: maskId, 
+        option_index: optionIndex 
+      }, { onConflict: 'poll_id,mask_id' })
       .select()
       .single();
 
     if (error) {
-      if (error.code === '23505') { // Unique constraint violation
-        return res.status(400).json({ error: 'You have already voted in this poll' });
-      }
       throw error;
     }
 
     res.json({ success: true, vote: data });
   } catch (error) {
     console.error('[BACKEND] Voting error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Shadow Polls: Delete a poll (Creator only)
+app.delete('/api/polls/:pollId', async (req, res) => {
+  const { pollId } = req.params;
+  const { maskId } = req.body;
+
+  if (!pollId || !maskId) {
+    return res.status(400).json({ error: 'Poll ID and Mask ID are required' });
+  }
+
+  try {
+    // 1. Verify ownership
+    const { data: poll, error: fetchErr } = await supabaseAdmin
+      .from('polls')
+      .select('creator_id')
+      .eq('id', pollId)
+      .single();
+
+    if (fetchErr || !poll) return res.status(404).json({ error: 'Poll not found' });
+    if (poll.creator_id !== maskId) return res.status(403).json({ error: 'Unauthorized: Only the creator can delete this poll' });
+
+    // 2. Delete poll (votes will cascade delete via DB constraint)
+    const { error: delErr } = await supabaseAdmin
+      .from('polls')
+      .delete()
+      .eq('id', pollId);
+
+    if (delErr) throw delErr;
+
+    res.json({ success: true, message: 'Poll deleted successfully' });
+  } catch (error) {
+    console.error('[BACKEND] Poll deletion error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete message for me
+app.post('/api/messages/:messageId/delete-for-me', async (req, res) => {
+  const { messageId } = req.params;
+  const { maskId } = req.body;
+
+  if (!messageId || !maskId) {
+    return res.status(400).json({ error: 'Message ID and Mask ID are required' });
+  }
+
+  try {
+    const { error } = await supabaseAdmin
+      .from('message_deletions')
+      .upsert({ message_id: messageId, mask_id: maskId }, { onConflict: 'message_id,mask_id' });
+
+    if (error) throw error;
+    res.json({ success: true, message: 'Message hidden for user' });
+  } catch (error) {
+    console.error('[BACKEND] Delete for me error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
