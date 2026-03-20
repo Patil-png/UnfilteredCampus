@@ -73,16 +73,6 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// 🛡️ Safe Query Wrapper — Prevent hanging requests
-async function safeQuery(queryPromise, timeoutMs = 8000) {
-  return Promise.race([
-    queryPromise,
-    new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('SUPABASE_TIMEOUT')), timeoutMs)
-    )
-  ]);
-}
-
 app.post('/api/auth/mask', maskLimiter, async (req, res) => {
   const { userId } = req.body;
   console.log(`[BACKEND] Mask request received for user: ${userId}`);
@@ -96,14 +86,17 @@ app.post('/api/auth/mask', maskLimiter, async (req, res) => {
     console.log(`[BACKEND] Generated Mask ID: ${maskId}`);
 
     // Check if user is banned (with fast fallback)
-    const { data: banData, error: banError } = await safeQuery(
-      supabaseAdmin
-        .from('banned_hashes')
-        .select('hash_id')
-        .eq('hash_id', maskId)
-        .maybeSingle(),
-      3000 // 3s timeout for ban checks
-    );
+    const banCheck = supabaseAdmin
+      .from('banned_hashes')
+      .select('hash_id')
+      .eq('hash_id', maskId)
+      .maybeSingle();
+
+    // Use a promise race or just a short timeout for the security check
+    const banResult = await Promise.race([
+      banCheck,
+      new Promise((resolve) => setTimeout(() => resolve({ error: { message: 'timeout' } }), 2000))
+    ]);
 
     if (banResult.data) {
       console.log(`[BACKEND] USER IS BANNED: ${maskId}`);
@@ -128,14 +121,11 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    const { data, error } = await safeQuery(
-      supabaseAdmin
-        .from('user_accounts')
-        .insert([{ username, password_hash: hashedPassword }])
-        .select()
-        .single(),
-      5000
-    );
+    const { data, error } = await supabaseAdmin
+      .from('user_accounts')
+      .insert([{ username, password_hash: hashedPassword }])
+      .select()
+      .single();
 
     if (error) {
       if (error.code === '23505') {
@@ -146,16 +136,13 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 
     // AUTO-INITIALIZE PROFILE
     const maskId = generateAnonymousId(data.id);
-    await safeQuery(
-      supabaseAdmin
-        .from('profiles')
-        .upsert({ 
-          mask_id: maskId, 
-          nickname: username,
-          last_seen: new Date().toISOString()
-        }, { onConflict: 'mask_id' }),
-      5000
-    );
+    await supabaseAdmin
+      .from('profiles')
+      .upsert({ 
+        mask_id: maskId, 
+        nickname: username,
+        last_seen: new Date().toISOString()
+      }, { onConflict: 'mask_id' });
 
     console.log(`\n[✨ AUTH] New Registration SUCCESS:`);
     console.log(`   - Username: ${username}`);
@@ -177,14 +164,11 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   }
 
   try {
-    const { data: user, error } = await safeQuery(
-      supabaseAdmin
-        .from('user_accounts')
-        .select('*')
-        .eq('username', username)
-        .single(),
-      5000
-    );
+    const { data: user, error } = await supabaseAdmin
+      .from('user_accounts')
+      .select('*')
+      .eq('username', username)
+      .single();
 
     if (error || !user) {
       return res.status(401).json({ error: 'Invalid name or password' });
@@ -197,22 +181,14 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
     // SYNC PROFILE ON LOGIN
     const maskId = generateAnonymousId(user.id);
-    const { data: profile } = await safeQuery(
-      supabaseAdmin
-        .from('profiles')
-        .upsert({ 
-          mask_id: maskId, 
-          last_seen: new Date().toISOString()
-        }, { onConflict: 'mask_id' })
-        .select('*, selected_channel:channels(name)')
-        .single(),
-      5000
-    );
-    
-    // Fallback if profile fetch fails or times out
-    if (!profile) {
-      console.warn('[AUTH] Profile sync timed out, continuing with partial session');
-    }
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .upsert({ 
+        mask_id: maskId, 
+        last_seen: new Date().toISOString()
+      }, { onConflict: 'mask_id' })
+      .select('*, selected_channel:channels(name)')
+      .single();
 
     const currentChat = profile?.selected_channel ? profile.selected_channel.name : 'None (Full Discovery)';
 
