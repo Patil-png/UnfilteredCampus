@@ -112,7 +112,7 @@ app.post('/api/auth/mask', maskLimiter, async (req, res) => {
 
 // 0. CUSTOM AUTH SYSTEM (No Email / No Rate Limit)
 app.post('/api/auth/register', authLimiter, async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, fullName } = req.body;
   
   if (!username || !password) {
     return res.status(400).json({ error: 'Name and password are required' });
@@ -141,6 +141,8 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       .upsert({ 
         mask_id: maskId, 
         nickname: username,
+        username: username,
+        full_name: fullName || null,
         last_seen: new Date().toISOString()
       }, { onConflict: 'mask_id' });
 
@@ -185,6 +187,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       .from('profiles')
       .upsert({ 
         mask_id: maskId, 
+        username: username,
         last_seen: new Date().toISOString()
       }, { onConflict: 'mask_id' })
       .select('*, selected_channel:channels(name)')
@@ -638,7 +641,7 @@ app.get('/api/profiles/user/:userId', async (req, res) => {
 
 // Route to update a profile
 app.post('/api/profiles', async (req, res) => {
-  const { userId, nickname, avatarUrl } = req.body;
+  const { userId, nickname, avatarUrl, fullName } = req.body;
 
   if (!userId) {
     console.error('[BACKEND] Profile update failed: Missing userId');
@@ -655,6 +658,7 @@ app.post('/api/profiles', async (req, res) => {
         mask_id: maskId,
         nickname: nickname,
         avatar_url: avatarUrl,
+        full_name: fullName,
         selected_channel_id: channelId,
         updated_at: new Date()
       })

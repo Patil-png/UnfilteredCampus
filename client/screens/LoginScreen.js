@@ -18,6 +18,7 @@ export default function LoginScreen({ onLoginSuccess, initialMode = 'signup' }) 
   const [agreed, setAgreed] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
   const [isLogin, setIsLogin] = useState(initialMode === 'login');
 
   React.useEffect(() => {
@@ -48,6 +49,7 @@ export default function LoginScreen({ onLoginSuccess, initialMode = 'signup' }) 
       const response = await axios.post(`${BACKEND_URL}${endpoint}`, {
         username: username.trim(),
         password: password.trim(),
+        fullName: fullName.trim(),
       });
 
       if (response.data.user) {
@@ -140,6 +142,19 @@ export default function LoginScreen({ onLoginSuccess, initialMode = 'signup' }) 
                   autoCapitalize="none"
                 />
               </View>
+
+              {!isLogin && (
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>REAL NAME (OPTIONAL)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g. Alex Johnson"
+                    placeholderTextColor="#9CA3AF"
+                    value={fullName}
+                    onChangeText={setFullName}
+                  />
+                </View>
+              )}
 
               <View style={styles.inputContainer}>
                 <Text style={[styles.inputLabel, isLogin && { color: '#10B981' }]}>PASSWORD</Text>

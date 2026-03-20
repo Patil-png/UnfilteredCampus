@@ -24,6 +24,9 @@ export default function ProfileScreen({ user, maskId: propMaskId, onBack, onGrou
   const [selectedCollege, setSelectedCollege] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [selectedChannel, setSelectedChannel] = useState(null);
+  const [fullName, setFullName] = useState('');
+  const [nickname, setNickname] = useState('');
+  const [accountUsername, setAccountUsername] = useState('');
 
   // Custom Alert State
   const [alert, setAlert] = useState({ 
@@ -65,6 +68,9 @@ export default function ProfileScreen({ user, maskId: propMaskId, onBack, onGrou
       const myMaskId = profRes.data?.mask_id || '';
       if (profRes.data) {
         setMaskId(myMaskId);
+        setFullName(profRes.data.full_name || '');
+        setNickname(profRes.data.nickname || '');
+        setAccountUsername(profRes.data.username || '');
       }
 
       let pGroups = [];
@@ -154,6 +160,22 @@ export default function ProfileScreen({ user, maskId: propMaskId, onBack, onGrou
       generalChannel: { id: channelData.id, name: channelData.name, icon: channelData.icon, collegeId: college.id }
     });
     setStep(3);
+  };
+
+  const handleUpdateProfile = async () => {
+    setLoading(true);
+    try {
+      await axios.post(`${BACKEND_URL}/api/profiles`, {
+        userId: user.id,
+        nickname: nickname,
+        fullName: fullName
+      });
+      showAlert('Success', 'Profile updated successfully!', 'success');
+    } catch (err) {
+      showAlert('Error', 'Failed to update profile.', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleFinish = async () => {
@@ -369,24 +391,20 @@ export default function ProfileScreen({ user, maskId: propMaskId, onBack, onGrou
       <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
         <StatusBar barStyle="dark-content" backgroundColor="#F8F9FA" />
         {/* Header */}
-            <View style={styles.header}>
-              <TouchableOpacity onPress={onBack} style={styles.headerActionBtn}>
-                <Text style={styles.headerActionText}>✕</Text>
-              </TouchableOpacity>
-              <Text style={styles.headerTitle}>Profile</Text>
-              <TouchableOpacity onPress={confirmDeleteAccount} style={styles.deleteAccountBtn}>
-                <Text style={styles.deleteAccountText}>Delete</Text>
-              </TouchableOpacity>
-            </View>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={onBack} style={styles.headerActionBtn}>
+            <Text style={styles.headerActionText}>✕</Text>
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Profile</Text>
+          <TouchableOpacity onPress={confirmDeleteAccount} style={styles.deleteAccountBtn}>
+            <Text style={styles.deleteAccountText}>Delete</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Identity Banner */}
         <View style={styles.identityBanner}>
           <View style={styles.avatarCircle}><Text style={styles.avatarEmoji}>👤</Text></View>
-          <Text style={styles.identityName}>{user?.username || 'Student'}</Text>
-          <View style={styles.maskIdPill}>
-            <Text style={styles.maskIdLabel}>GHOST ID  </Text>
-            <Text style={styles.maskIdValue}>{maskId?.substring(0, 14) || '—'}</Text>
-          </View>
+          <Text style={styles.identityName}>{fullName || accountUsername || nickname || user?.username || 'Student'}</Text>
           <Text style={styles.identityHint}>Fully anonymous · Cannot be traced</Text>
         </View>
 
@@ -403,6 +421,51 @@ export default function ProfileScreen({ user, maskId: propMaskId, onBack, onGrou
             <TouchableOpacity onPress={() => setStep(2)} style={styles.changeBtn}><Text style={styles.changeBtnText}>Change</Text></TouchableOpacity>
           </View>
         )}
+
+        {/* Account Settings */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>ACCOUNT SETTINGS</Text>
+          <View style={styles.inputCard}>
+            <Text style={styles.fieldLabel}>REAL NAME (OPTIONAL)</Text>
+            <TextInput
+              style={styles.profileInput}
+              value={fullName}
+              onChangeText={setFullName}
+              placeholder="Your Real Name"
+              placeholderTextColor="#9CA3AF"
+            />
+            
+            <View style={styles.divider} />
+            
+            <Text style={styles.fieldLabel}>ACCOUNT USERNAME (REAL USERNAME)</Text>
+            <TextInput
+              style={[styles.profileInput, { color: '#9CA3AF' }]}
+              value={accountUsername}
+              editable={false}
+              placeholder="Not set"
+              placeholderTextColor="#9CA3AF"
+            />
+
+            <View style={styles.divider} />
+            
+            <Text style={styles.fieldLabel}>ANONYMOUS NICKNAME</Text>
+            <TextInput
+              style={styles.profileInput}
+              value={nickname}
+              onChangeText={setNickname}
+              placeholder="e.g. CampusGhost"
+              placeholderTextColor="#9CA3AF"
+            />
+          </View>
+          
+          <TouchableOpacity 
+            style={[styles.saveBtn, loading && { opacity: 0.7 }]} 
+            onPress={handleUpdateProfile}
+            disabled={loading}
+          >
+            {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Save Profile Changes</Text>}
+          </TouchableOpacity>
+        </View>
 
         {/* Sign Out */}
         <View style={{ paddingHorizontal: 20, marginTop: 10 }}>

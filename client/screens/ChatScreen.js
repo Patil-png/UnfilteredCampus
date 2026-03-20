@@ -5,6 +5,7 @@ import { Swipeable, TapGestureHandler, State } from 'react-native-gesture-handle
 import axios from 'axios';
 import * as Application from 'expo-application';
 import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../supabaseClient';
 import CustomAlert from '../components/CustomAlert';
 
@@ -176,7 +177,7 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
           // Fetch full row with nickname joined
           const { data: fullDraft } = await supabase
             .from('messages')
-            .select('*, profiles:sender_id(nickname), message_reactions(*), message_deletions!left(mask_id)')
+            .select('*, profiles:sender_id(nickname, full_name, username), message_reactions(*), message_deletions!left(mask_id)')
             .eq('id', payload.new.id)
             .single();
           
@@ -256,8 +257,9 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
       // Fetch profile to get chosen nickname
       try {
         const profileRes = await axios.get(`${BACKEND_URL}/api/profiles/${mId}`);
-        if (profileRes.data && profileRes.data.nickname) {
-          setMyNickname(profileRes.data.nickname.toUpperCase());
+        if (profileRes.data) {
+          const displayName = profileRes.data.full_name || profileRes.data.username || profileRes.data.nickname || 'ANONYMOUS';
+          setMyNickname(displayName.toUpperCase());
         }
       } catch (err) {
         console.warn('[CHAT] Profile fetch error:', err.message);
@@ -281,7 +283,7 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
 
       const { data, error } = await supabase
         .from('messages')
-        .select('*, profiles:sender_id(nickname), message_reactions(*), message_deletions!left(mask_id)')
+        .select('*, profiles:sender_id(nickname, full_name, username), message_reactions(*), message_deletions!left(mask_id)')
         .eq('channel_id', channel.id)
         .order('created_at', { ascending: false })
         .range(from, to);
@@ -371,7 +373,7 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
       .from('polls')
       .select(`
         *,
-        profiles:creator_id (nickname),
+        profiles:creator_id (nickname, full_name, username),
         poll_votes (option_index, mask_id)
       `)
       .eq('channel_id', channel.id)
@@ -639,8 +641,8 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
   ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="dark-content" />
+    <LinearGradient colors={['#0F0B1E', '#07050F']} style={styles.container}>
+      <StatusBar barStyle="light-content" />
 
       <View style={styles.header}>
         {isSearching ? (
@@ -690,7 +692,7 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
 
         <View style={styles.headerBottomFixed}>
           <Text style={styles.maskBadgeText}>
-            POSTING AS: <Text style={{ color: '#6366F1' }}>{myNickname.toUpperCase()}</Text> • <Text style={{ opacity: 0.6 }}>{maskId ? maskId.substring(0, 8).toUpperCase() : '...'}</Text>
+            POSTING AS: <Text style={{ color: '#6366F1' }}>{myNickname.toUpperCase()}</Text>
           </Text>
         </View>
       </View>
@@ -700,7 +702,7 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
         behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        <View style={{ flex: 1, backgroundColor: '#F8F9FA' }}>
+        <View style={{ flex: 1, backgroundColor: 'transparent' }}>
           <TouchableOpacity
             style={{ flex: 1 }}
             activeOpacity={1}
@@ -740,79 +742,33 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
               )}
               renderItem={({ item, index }) => {
                 const isPoll = !!item.isPoll;
-                // In inverted list, Visually Above = Higher Index (Older)
                 const nextItem = index < combinedItems.length - 1 ? combinedItems[index + 1] : null;
-
                 const isMe = item.sender_id === maskId || item.creator_id === maskId;
-                
-                // Grouping logic (only for messages)
                 const isSameAsAbove = !isPoll && nextItem && !nextItem.isPoll && nextItem.sender_id === item.sender_id;
                 const isSameDateAsAbove = nextItem && new Date(nextItem.created_at).toDateString() === new Date(item.created_at).toDateString();
                 const isFirstInGroup = !(isSameAsAbove && isSameDateAsAbove);
-                
                 const showDateHeader = !isSameDateAsAbove;
 
-                if (item.isPoll) {
-                  const totalVotes = item.poll_votes?.length || 0;
-                  const userVote = item.poll_votes?.find(v => v.mask_id === maskId);
-                  const isExpired = item.expires_at && new Date(item.expires_at) < new Date();
-
-                  return (
-                    <View style={styles.pollWrapper}>
-                      <View style={styles.pollCard}>
-                        <View style={styles.pollHeader}>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Text style={styles.pollBadge}>⚡ CAMPUS PULSE</Text>
-                            {item.creator_id === maskId && (
-                              <TouchableOpacity onPress={() => deletePoll(item.id)} style={{ padding: 5 }}>
-                                <Text style={{ color: '#EF4444', fontSize: 16, fontWeight: '800' }}>✕</Text>
-                              </TouchableOpacity>
-                            )}
-                          </View>
-                          <Text style={styles.pollQuestion}>{item.question}</Text>
-                        </View>
-
-                        <View style={styles.pollOptions}>
-                          {item.options.map((option, index) => {
-                            const optionVotes = item.poll_votes?.filter(v => v.option_index === index).length || 0;
-                            const percentage = totalVotes > 0 ? Math.round((optionVotes / totalVotes) * 100) : 0;
-                            const isSelected = userVote?.option_index === index;
-
-                            return (
-                              <View key={index} style={{ marginBottom: 10 }}>
-                                <TouchableOpacity
-                                  style={[styles.optionBtn, isSelected && styles.optionSelected]}
-                                  onPress={() => !isExpired && userVote?.option_index !== index && castVote(item.id, index)}
-                                  disabled={isExpired || userVote?.option_index === index}
-                                >
-                                  <View style={[styles.optionProgress, { width: `${percentage}%` }]} />
-                                  <View style={styles.optionContent}>
-                                    <Text style={[styles.optionText, isSelected && styles.optionTextSelected]}>{option}</Text>
-                                    <Text style={styles.optionPercent}>{percentage}%</Text>
-                                  </View>
-                                </TouchableOpacity>
-                              </View>
-                            );
-                          })}
-                        </View>
-
-                      </View>
-                    </View>
-                  );
-                }
-
-                const nickname = item.profiles?.nickname || 'ANONYMOUS';
+                const nickname = item.profiles?.full_name || item.profiles?.username || item.profiles?.nickname || 'ANONYMOUS';
                 const timeStr = new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+
+                // Relative time helper
+                const getTimeAgo = (dateStr) => {
+                  const seconds = Math.floor((new Date() - new Date(dateStr)) / 1000);
+                  if (seconds < 60) return 'now';
+                  const minutes = Math.floor(seconds / 60);
+                  return `${minutes}m`;
+                };
+                const timeAgo = getTimeAgo(item.created_at);
 
                 const formatDateHeader = (dateStr) => {
                   const d = new Date(dateStr);
                   const today = new Date();
                   const yesterday = new Date();
                   yesterday.setDate(today.getDate() - 1);
-
                   if (d.toDateString() === today.toDateString()) return 'TODAY';
                   if (d.toDateString() === yesterday.toDateString()) return 'YESTERDAY';
-                  return d.toLocaleDateString([], { day: '2-digit', month: 'long', year: 'numeric' }).toUpperCase();
+                  return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
                 };
 
                 const renderReplyAction = (progress, dragX) => {
@@ -821,7 +777,6 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
                     outputRange: [0, 1, 1.1],
                     extrapolate: 'clamp'
                   });
-
                   return (
                     <View style={{ width: 80, justifyContent: 'center', paddingLeft: 10 }}>
                       <Animated.View style={{
@@ -839,6 +794,81 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
                   );
                 };
 
+                const renderReactions = (msg) => {
+                  if (!msg.message_reactions || msg.message_reactions.length === 0) return null;
+                  const grouped = msg.message_reactions.reduce((acc, curr) => {
+                    acc[curr.emoji] = (acc[curr.emoji] || 0) + 1;
+                    return acc;
+                  }, {});
+                  return (
+                    <View style={[styles.reactionContainer, isMe ? { right: 0 } : { left: 0 }]}>
+                      {Object.entries(grouped).map(([emoji, count]) => {
+                        const userReacted = msg.message_reactions.some(r => r.emoji === emoji && r.mask_id === maskId);
+                        return (
+                          <TouchableOpacity 
+                            key={emoji} 
+                            style={[styles.reactionBadge, userReacted && styles.userReactionActive]}
+                            onPress={() => toggleReaction(msg.id, emoji)}
+                          >
+                            <Text style={styles.reactionText}>{emoji} {count > 1 ? count : ''}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  );
+                };
+
+                if (item.isPoll) {
+                  const totalVotes = item.poll_votes?.length || 0;
+                  const userVote = item.poll_votes?.find(v => v.mask_id === maskId);
+                  const isExpired = item.expires_at && new Date(item.expires_at) < new Date();
+                  return (
+                    <View style={styles.pollWrapper}>
+                      {showDateHeader && (
+                        <View style={styles.dateHeader}>
+                          <View style={styles.datePill}>
+                            <Text style={styles.dateText}>{formatDateHeader(item.created_at)}</Text>
+                          </View>
+                        </View>
+                      )}
+                      <View style={styles.pollCard}>
+                        <View style={styles.pollHeader}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Text style={styles.pollBadge}>CAMPUS PULSE ⚡</Text>
+                            {item.creator_id === maskId && (
+                              <TouchableOpacity onPress={() => deletePoll(item.id)} style={{ padding: 5 }}>
+                                <Text style={{ color: '#EF4444', fontSize: 16, fontWeight: '800' }}>✕</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                          <Text style={styles.pollQuestion}>{item.question}</Text>
+                        </View>
+                        <View style={styles.pollOptions}>
+                          {item.options.map((option, idx) => {
+                            const optionVotes = item.poll_votes?.filter(v => v.option_index === idx).length || 0;
+                            const percentage = totalVotes > 0 ? Math.round((optionVotes / totalVotes) * 100) : 0;
+                            const isSelected = userVote?.option_index === idx;
+                            return (
+                              <TouchableOpacity
+                                key={idx}
+                                style={[styles.optionBtn, isSelected && styles.optionSelected, { marginBottom: 10 }]}
+                                onPress={() => !isExpired && userVote?.option_index !== idx && castVote(item.id, idx)}
+                                disabled={isExpired || userVote?.option_index === idx}
+                              >
+                                <View style={[styles.optionProgress, { width: `${percentage}%` }]} />
+                                <View style={styles.optionContent}>
+                                  <Text style={[styles.optionText, isSelected && styles.optionTextSelected]}>{option}</Text>
+                                  <Text style={styles.optionPercent}>{percentage}%</Text>
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    </View>
+                  );
+                }
+
                 return (
                   <View key={item.id}>
                     {showDateHeader && (
@@ -854,11 +884,7 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                         setReplyingTo(item);
                       }}
-                      onSwipeableOpen={(direction, swipeable) => {
-                        if (direction === 'left') {
-                          swipeable.close();
-                        }
-                      }}
+                      onSwipeableOpen={(direction, swipeable) => { if (direction === 'left') swipeable.close(); }}
                       friction={2}
                       leftThreshold={70}
                     >
@@ -872,79 +898,64 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
                         }}
                       >
                         <TouchableOpacity
+                          activeOpacity={1}
                           onLongPress={(e) => showReactionPicker(item.id, isMe, e)}
-                          activeOpacity={0.9}
+                          delayLongPress={300}
                           style={[
                             styles.messageWrapper,
                             isMe ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' },
-                            !isFirstInGroup && { marginTop: -8 }
+                            !isFirstInGroup && { marginTop: -8 },
+                            (item.message_reactions?.length > 0) && styles.messageWithReactions
                           ]}
                         >
-                        <View style={[styles.messageRow, isMe && { flexDirection: 'row-reverse' }]}>
-                          <View style={[
-                            styles.bubbleContainer,
-                            item.message_reactions?.length > 0 && { marginBottom: 12 }
-                          ]}>
+                          <View style={[styles.messageRow, isMe && { flexDirection: 'row-reverse' }]}>
                             {!isMe && isFirstInGroup && (
-                              <Text style={styles.bubbleHeader}>{nickname}</Text>
+                              <View style={styles.avatarContainer}>
+                                <LinearGradient colors={['#8B5CF6', '#6366F1']} style={styles.avatarCircle}>
+                                  <Text style={styles.avatarLetter}>{nickname.slice(0, 1).toUpperCase()}</Text>
+                                </LinearGradient>
+                              </View>
                             )}
-
-                            <View style={[
-                              styles.bubble,
-                              isMe ? styles.selfBubble : styles.nodeBubble,
-                              !isFirstInGroup && (isMe ? { borderTopRightRadius: 20 } : { borderTopLeftRadius: 20 }),
-                              item.message_reactions?.length > 0 && { paddingBottom: 18 }
-                            ]}>
-
-                              {item.reply_to_id && (() => {
-                                const repliedMsg = messages.find(m => m.id === item.reply_to_id);
-                                if (!repliedMsg) return null;
-                                return (
-                                  <View style={styles.quoteBlock}>
-                                    <Text style={styles.quoteNickname} numberOfLines={1}>
-                                      {repliedMsg.sender_id === maskId ? '(YOU)' : (repliedMsg.profiles?.nickname || 'ANONYMOUS')}
-                                    </Text>
-                                    <Text style={styles.quoteText} numberOfLines={2}>
-                                      {renderLinkifiedText(repliedMsg.content, isMe)}
-                                    </Text>
+                            <View style={[styles.bubbleCol, isMe && { alignItems: 'flex-end' }, !isMe && !isFirstInGroup && { marginLeft: 44 }]}>
+                              {!isMe && isFirstInGroup && <Text style={styles.bubbleHeader}>{nickname} • {timeAgo}</Text>}
+                              <View style={styles.bubbleContainer}>
+                                {isMe ? (
+                                  <LinearGradient
+                                    colors={['#4C3BFF', '#7366FF']}
+                                    start={{ x: 0, y: 1 }} end={{ x: 1, y: 0 }}
+                                    style={[styles.bubble, styles.selfBubble, !isFirstInGroup && { borderTopRightRadius: 20 }]}
+                                  >
+                                    {item.reply_to_id && item.reply_to_content && (
+                                      <View style={styles.quoteBlock}>
+                                        <Text style={styles.quoteNickname}>{item.reply_to_nickname || 'Replied to'}</Text>
+                                        <Text style={styles.quoteText} numberOfLines={2}>{item.reply_to_content}</Text>
+                                      </View>
+                                    )}
+                                    <Text style={[styles.messageText, styles.selfText]}>{renderLinkifiedText(item.content, isMe)}</Text>
+                                    <View style={styles.timeContainer}>
+                                      <Text style={[styles.inlineTime, styles.selfTime]}>{timeStr}</Text>
+                                      <Text style={styles.tickIcon}>✓</Text>
+                                    </View>
+                                  </LinearGradient>
+                                ) : (
+                                  <View style={[styles.bubble, styles.nodeBubble, !isFirstInGroup && { borderTopLeftRadius: 20 }]}>
+                                    {item.reply_to_id && item.reply_to_content && (
+                                      <View style={styles.quoteBlock}>
+                                        <Text style={styles.quoteNickname}>{item.reply_to_nickname || 'Replied to'}</Text>
+                                        <Text style={styles.quoteText} numberOfLines={2}>{item.reply_to_content}</Text>
+                                      </View>
+                                    )}
+                                    <Text style={[styles.messageText, styles.nodeText]}>{renderLinkifiedText(item.content, isMe)}</Text>
+                                    <View style={styles.timeContainer}>
+                                      <Text style={styles.inlineTime}>{timeStr}</Text>
+                                    </View>
                                   </View>
-                                );
-                              })()}
-
-                              <Text style={[styles.messageText, isMe ? styles.selfText : styles.nodeText]}>
-                                {renderLinkifiedText(item.content, isMe)}
-                              </Text>
-
-                              <View style={styles.timeContainer}>
-                                <Text style={[styles.inlineTime, isMe && styles.selfTime]}>{timeStr}</Text>
-                                {isMe && <Text style={styles.tickIcon}>✓</Text>}
+                                )}
+                                {renderReactions(item)}
                               </View>
                             </View>
-
-                            {/* Reactions Display */}
-                            {item.message_reactions && item.message_reactions.length > 0 && (
-                              <View style={[styles.reactionContainer, isMe ? { right: 0 } : { left: 0 }]}>
-                                {(() => {
-                                  const uniqueEmojis = [...new Set(item.message_reactions.map(r => r.emoji))];
-                                  return uniqueEmojis.map(emoji => {
-                                    const count = item.message_reactions.filter(r => r.emoji === emoji).length;
-                                    const userReacted = item.message_reactions.some(r => r.emoji === emoji && r.mask_id === maskId);
-                                    return (
-                                      <TouchableOpacity
-                                        key={emoji}
-                                        style={[styles.reactionBadge, userReacted && styles.userReactionActive]}
-                                        onPress={() => toggleReaction(item.id, emoji)}
-                                      >
-                                        <Text style={styles.reactionText}>{emoji}{count > 1 ? ` ${count}` : ''}</Text>
-                                      </TouchableOpacity>
-                                    );
-                                  });
-                                })()}
-                              </View>
-                            )}
                           </View>
-                        </View>
-                      </TouchableOpacity>
+                        </TouchableOpacity>
                       </TapGestureHandler>
                     </Swipeable>
                   </View>
@@ -986,12 +997,15 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
               </View>
             )}
 
-            <View style={styles.inputContainerRow}>
-              <View style={styles.inputWrapper}>
+            <View style={styles.inputRow}>
+              <View style={styles.inputPill}>
+                <TouchableOpacity style={styles.emojiBtn}>
+                  <Text style={styles.emojiIcon}>😊</Text>
+                </TouchableOpacity>
                 <TextInput
                   style={styles.chatInput}
-                  placeholder="Type a message..."
-                  placeholderTextColor="#9CA3AF"
+                  placeholder="Message..."
+                  placeholderTextColor="#94A3B8"
                   value={content}
                   onChangeText={setContent}
                   multiline={true}
@@ -1000,8 +1014,7 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
               </View>
               <TouchableOpacity
                 style={styles.sendBtn}
-                onPress={sendMessage}
-                disabled={!content.trim()}
+                onPress={() => content.trim() ? sendMessage() : startVoiceSession?.()}
                 activeOpacity={0.8}
               >
                 <Text style={styles.sendIcon}>
@@ -1281,272 +1294,470 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
         cancelText={alert.cancelText}
         extraText={alert.extraText}
       />
-    </View>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9FAFB' },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F9FAFB' },
+  container: { flex: 1 },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0F0C29' },
 
-  // Header Styles (Modern, Clean White)
+  // Header Styles (Premium Translucent)
   header: {
-    backgroundColor: '#FFFFFF',
-    paddingTop: Platform.OS === 'ios' ? 50 : 25,
+    backgroundColor: 'rgba(7, 5, 15, 0.9)',
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
     paddingBottom: 15,
-    paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-    zIndex: 100,
-    elevation: 4,
+    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
   },
-  headerTop: { flexDirection: 'row', alignItems: 'center' },
-  backBtn: { padding: 8, marginRight: 8 },
-  headerBackIcon: { color: '#1F2937', fontSize: 24 },
-  headerAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
-  avatarEmoji: { fontSize: 20 },
-  headerTitleContainer: { flex: 1, marginLeft: 12 },
-  headerTitleText: { color: '#111827', fontSize: 17, fontWeight: '700' },
-  headerSubtitleText: { color: '#6366F1', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
-  headerActions: { flexDirection: 'row', alignItems: 'center' },
-  actionBtn: { padding: 10, marginLeft: 5 },
-  actionIcon: { fontSize: 18, color: '#6B7280' },
+  headerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  backBtn: {
+    marginRight: 15,
+  },
+  headerBackIcon: {
+    fontSize: 24,
+    color: '#FFF',
+  },
+  headerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  avatarEmoji: {
+    fontSize: 22,
+  },
+  headerTitleContainer: {
+    flex: 1,
+  },
+  headerTitleText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFF',
+    letterSpacing: 0.5,
+  },
+  headerSubtitleText: {
+    fontSize: 11,
+    color: '#6366F1',
+    fontWeight: '700',
+    marginTop: 2,
+    letterSpacing: 1,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  actionBtn: {
+    padding: 8,
+  },
+  actionIcon: {
+    fontSize: 22,
+    color: '#FFF',
+  },
 
   headerBottomFixed: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
     marginTop: 10,
-    borderRadius: 6,
+    borderRadius: 8,
     alignSelf: 'flex-start',
     marginLeft: 48,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.2)',
   },
-  maskBadgeText: { color: '#6B7280', fontSize: 9, fontWeight: '700', letterSpacing: 0.3 },
+  maskBadgeText: { color: 'rgba(255, 255, 255, 0.7)', fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
 
   // Date Header (Sleek Pill)
-  dateHeader: { alignItems: 'center', marginVertical: 12 },
-  datePill: { backgroundColor: '#F3F4F6', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20 },
-  dateText: { fontSize: 10, color: '#9CA3AF', fontWeight: '800', letterSpacing: 0.5 },
+  dateHeader: {
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  datePill: {
+    backgroundColor: 'rgba(30, 30, 50, 0.6)',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  dateText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#94A3B8',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+  },
 
   // Message Styles (Modern Pill Bubbles)
-  messageWrapper: { width: '100%', paddingHorizontal: 12, marginVertical: 0.5 },
-  messageRow: { flexDirection: 'row', alignItems: 'flex-end', maxWidth: '85%' },
-  bubbleContainer: { position: 'relative' },
-  bubbleHeader: { color: '#6366F1', fontSize: 11, fontWeight: '800', marginLeft: 12, marginBottom: 2, letterSpacing: 0.3 },
+  // Message List Styles
+  messageWrapper: {
+    paddingHorizontal: 16,
+    marginVertical: 4,
+  },
+  messageWithReactions: {
+    paddingBottom: 15, // Extra room only when reactions are present
+  },
+  messageRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    maxWidth: '85%',
+  },
+  selfRow: {
+    alignSelf: 'flex-end',
+  },
+  nodeRow: {
+    alignSelf: 'flex-start',
+  },
 
+  // Avatar Styles (Received)
+  avatarContainer: {
+    marginRight: 10,
+    marginBottom: 2,
+  },
+  avatarCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarLetter: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+
+  // Bubble Column (Headers + Bubble)
+  bubbleCol: {
+    flex: 1,
+  },
+  bubbleHeader: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginBottom: 4,
+    marginLeft: 4,
+    fontWeight: '600',
+  },
+
+  // Bubble Styles
+  bubbleHeader: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#94A3B8',
+    marginBottom: 4,
+  },
+  bubbleContainer: {
+    position: 'relative',
+  },
   bubble: {
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 10,
-    borderRadius: 20,
-    minWidth: 80,
+    borderRadius: 22,
+    elevation: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.1,
     shadowRadius: 2,
-    elevation: 1,
   },
-  nodeBubble: { 
-    backgroundColor: '#FFFFFF', 
-    borderWidth: 1, 
-    borderColor: '#F3F4F6',
-    borderTopLeftRadius: 4, 
+  selfBubble: {
+    borderBottomRightRadius: 4,
   },
-  selfBubble: { 
-    backgroundColor: '#6366F1', 
-    borderTopRightRadius: 4,
+  nodeBubble: {
+    backgroundColor: 'rgba(30, 30, 50, 0.4)',
+    borderBottomLeftRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
 
   // Legacy Tail removed for Modern Look
   tailContainer: { display: 'none' },
 
   messageText: {
-    fontSize: 15,
-    lineHeight: 19,
-    fontWeight: '450'
+    fontSize: 16,
+    lineHeight: 22,
   },
-  nodeText: { color: '#1F2937' },
-  selfText: { color: '#FFFFFF' },
-  linkText: {
-    textDecorationLine: 'underline',
+  selfText: {
+    color: '#FFF',
+    fontWeight: '500',
   },
-  nodeLink: {
-    color: '#2563EB',
-  },
-  selfLink: {
-    color: '#DBEAFE',
+  nodeText: {
+    color: '#E2E8F0',
   },
 
   timeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-end',
-    marginTop: 2,
-    minWidth: 45,
     justifyContent: 'flex-end',
+    marginTop: 4,
   },
   inlineTime: {
-    fontSize: 9,
-    fontWeight: '600',
-    color: '#9CA3AF',
+    fontSize: 10,
+    color: '#94A3B8',
   },
-  selfTime: { color: 'rgba(255,255,255,0.7)' },
+  selfTime: {
+    color: 'rgba(255, 255, 255, 0.7)',
+  },
   tickIcon: {
-    fontSize: 11,
-    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.7)',
     marginLeft: 4,
   },
 
+  // Date Header Styles
+  dateHeader: {
+    alignItems: 'center',
+    marginVertical: 20,
+    width: '100%',
+  },
+  datePill: {
+    backgroundColor: 'rgba(30, 30, 50, 0.6)',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  dateText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#94A3B8',
+    letterSpacing: 1.5,
+  },
+
   // Input Area (Modern Elevated Pill)
-  inputArea: { padding: 12, backgroundColor: '#F9FAFB', borderTopWidth: 0 },
-  inputContainerRow: { flexDirection: 'row', alignItems: 'flex-end' },
-  inputWrapper: {
+  // Input Area
+  inputArea: {
+    padding: 16,
+    backgroundColor: 'rgba(7, 5, 15, 0.98)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+  },
+  inputPill: {
     flex: 1,
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 28,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    minHeight: 50,
     alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 28,
+    paddingHorizontal: 18,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 4,
     marginRight: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
-  chatInput: { flex: 1, fontSize: 15, color: '#111827', maxHeight: 120, paddingVertical: 5 },
+  emojiBtn: {
+    marginRight: 10,
+  },
+  emojiIcon: {
+    fontSize: 22,
+  },
+  chatInput: {
+    flex: 1,
+    fontSize: 16,
+    color: '#FFF',
+    maxHeight: 120,
+  },
   sendBtn: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#6366F1',
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#6366F1',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 5,
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 8,
   },
-  sendIcon: { fontSize: 22, color: '#FFFFFF', marginLeft: 2 },
+  sendIcon: {
+    fontSize: 22,
+    color: '#FFF',
+  },
 
   reactionContainer: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     position: 'absolute',
-    bottom: -14,
-    gap: 4,
-    zIndex: 5,
+    bottom: -18,
+    zIndex: 10,
   },
   reactionBadge: {
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 18,
+    backgroundColor: '#1E293B',
+    borderRadius: 15,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderWidth: 1,
-    borderColor: '#F3F4F6',
-    flexDirection: 'row',
-    alignItems: 'center',
+    borderColor: '#334155',
+    marginRight: 4,
     shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
   },
   userReactionActive: {
     borderColor: '#6366F1',
-    backgroundColor: '#EEF2FF',
+    backgroundColor: 'rgba(99, 102, 241, 0.2)',
   },
   reactionText: {
-    color: '#4B5563',
-    fontSize: 10,
-    fontWeight: '800'
+    fontSize: 12,
+    color: '#FFF',
+    fontWeight: '700',
   },
 
   floatingPicker: {
     position: 'absolute',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#1E1B4B',
     flexDirection: 'row',
     paddingHorizontal: 18,
     paddingVertical: 14,
     borderRadius: 40,
     zIndex: 9999,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
     shadowColor: '#000',
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.3,
     shadowRadius: 15,
     elevation: 15,
   },
   pickerEmojiBtn: { paddingHorizontal: 10 },
-  pickerEmoji: { fontSize: 24 }, // Slightly smaller to fix squishing
+  pickerEmoji: { fontSize: 24 },
   plusBtn: {
     paddingLeft: 8,
     marginLeft: 4,
     borderLeftWidth: 1,
-    borderLeftColor: '#F3F4F6',
+    borderLeftColor: 'rgba(255, 255, 255, 0.1)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  plusIcon: { fontSize: 22, color: '#9CA3AF' },
+  plusIcon: { fontSize: 22, color: '#94A3B8' },
 
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
   pickerOverlay: { flex: 1, backgroundColor: 'transparent', justifyContent: 'flex-start' },
   modalCloseArea: { flex: 1 },
   fullPickerSheet: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#0F0C29',
     width: '100%',
     height: '75%',
     borderTopLeftRadius: 36,
     borderTopRightRadius: 36,
     padding: 24,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   sheetHeader: { alignItems: 'center', marginBottom: 24 },
-  dragHandle: { width: 44, height: 5, backgroundColor: '#E5E7EB', borderRadius: 3, marginBottom: 18 },
-  sheetTitle: { color: '#111827', fontSize: 13, fontWeight: '900', textAlign: 'center', letterSpacing: 1 },
+  dragHandle: { width: 44, height: 5, backgroundColor: 'rgba(255, 255, 255, 0.2)', borderRadius: 3, marginBottom: 18 },
+  sheetTitle: { color: '#FFF', fontSize: 13, fontWeight: '900', textAlign: 'center', letterSpacing: 1 },
   emojiScroll: { flex: 1 },
   sectionContainer: { marginBottom: 28 },
-  sectionTitle: { color: '#9CA3AF', fontSize: 11, fontWeight: '900', marginBottom: 18, marginLeft: 6, letterSpacing: 1.5 },
+  sectionTitle: { color: '#6366F1', fontSize: 11, fontWeight: '900', marginBottom: 18, marginLeft: 6, letterSpacing: 1.5 },
   emojiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   gridEmojiBtn: { width: '15%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center' },
   gridEmoji: { fontSize: 30 },
 
-  // Modern Poll Styles
-  pollWrapper: { paddingHorizontal: 16, marginVertical: 12 },
-  pollCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#F3F4F6',
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 10,
-    elevation: 3
+  // Poll Styles
+  pollWrapper: {
+    paddingHorizontal: 16,
+    marginVertical: 12,
   },
-  pollHeader: { marginBottom: 20 },
-  pollBadge: { color: '#6366F1', fontSize: 10, fontWeight: '900', marginBottom: 10, letterSpacing: 1 },
-  pollQuestion: { color: '#111827', fontSize: 17, fontWeight: '700', lineHeight: 22 },
-  pollOptions: { gap: 10 },
+  pollCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  pollHeader: {
+    marginBottom: 16,
+  },
+  pollBadge: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#6366F1',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  pollQuestion: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFF',
+    lineHeight: 24,
+  },
+  pollOptions: {
+    marginTop: 8,
+  },
   optionBtn: {
     height: 48,
-    borderRadius: 12,
-    backgroundColor: '#F9FAFB',
-    marginTop: 8,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     overflow: 'hidden',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#F3F4F6',
+    borderColor: 'rgba(255, 255, 255, 0.05)',
   },
-  optionSelected: { backgroundColor: '#EEF2FF', borderColor: '#6366F1', borderWidth: 1.5 },
-  optionProgress: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: 'rgba(99, 102, 241, 0.12)' },
-  optionContent: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 14 },
-  optionText: { color: '#374151', fontSize: 14, fontWeight: '600' },
-  optionTextSelected: { color: '#4F46E5', fontWeight: '800' },
-  optionPercent: { color: '#6B7280', fontSize: 12, fontWeight: '700' },
+  optionSelected: {
+    borderColor: '#6366F1',
+  },
+  optionProgress: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(99, 102, 241, 0.2)',
+  },
+  optionContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  optionText: {
+    fontSize: 15,
+    color: '#CBD5E1',
+    fontWeight: '600',
+  },
+  optionTextSelected: {
+    color: '#FFF',
+    fontWeight: '800',
+  },
+  optionPercent: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#6366F1',
+  },
 
   // Create Poll Styles
-  createPollSheet: { backgroundColor: '#FFFFFF', width: '100%', maxHeight: '85%', borderTopLeftRadius: 36, borderTopRightRadius: 36, padding: 26 },
+  createPollSheet: { 
+    backgroundColor: '#0F0C29', 
+    width: '100%', 
+    maxHeight: '85%', 
+    borderTopLeftRadius: 36, 
+    borderTopRightRadius: 36, 
+    padding: 26,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
   inputLabel: { color: '#6366F1', fontSize: 10, fontWeight: '900', letterSpacing: 2, marginBottom: 5 },
-  pollInput: { backgroundColor: '#F9FAFB', borderRadius: 12, padding: 16, marginTop: 10, fontSize: 15, color: '#111827' },
+  pollInput: { 
+    backgroundColor: 'rgba(255, 255, 255, 0.05)', 
+    borderRadius: 12, 
+    padding: 16, 
+    marginTop: 10, 
+    fontSize: 15, 
+    color: '#FFF',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
   optionInputRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 12 },
   addOptionText: { color: '#10B981', fontSize: 11, fontWeight: '900', letterSpacing: 1 },
   removeBtn: {
@@ -1572,11 +1783,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   quoteNickname: { color: '#6366F1', fontSize: 11, fontWeight: '800', marginBottom: 4 },
-  quoteText: { color: '#4B5563', fontSize: 12, lineHeight: 16 },
+  quoteText: { color: '#94A3B8', fontSize: 12, lineHeight: 16 },
   replyPreview: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(30, 30, 50, 0.95)',
     padding: 16,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
@@ -1585,13 +1796,11 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     marginBottom: -10,
     zIndex: 0,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
   },
   replyPreviewHeader: { fontSize: 12, fontWeight: '800', color: '#6366F1', marginBottom: 2 },
-  replyPreviewText: { fontSize: 13, color: '#6B7280', lineHeight: 18 },
+  replyPreviewText: { fontSize: 13, color: '#94A3B8', lineHeight: 18 },
 
   // Swipe-to-Action Styles (Kept for reference or future use if needed)
   actionSwipeBtn: {
@@ -1635,32 +1844,34 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   actionListCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#1E1B4B',
     borderRadius: 16,
     width: '100%',
     shadowColor: '#000',
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 6,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   actionListItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 14,
     paddingHorizontal: 16,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#1E1B4B',
   },
   actionListIcon: {
     fontSize: 20,
     marginRight: 14,
-    color: '#4B5563',
+    color: '#94A3B8',
     width: 24,
     textAlign: 'center',
   },
   actionListText: {
     fontSize: 16,
-    color: '#1F2937',
+    color: '#FFF',
     fontWeight: '500',
   },
   actionListDivider: {
@@ -1670,21 +1881,85 @@ const styles = StyleSheet.create({
   },
 
   // Prompt Modal Styles (Added for Inviting Users)
-  promptCard: { backgroundColor: '#FFF', width: '100%', borderRadius: 20, padding: 24, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 10, marginBottom: '40%' },
-  promptTitle: { fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 8 },
-  promptSub: { fontSize: 14, color: '#6B7280', marginBottom: 20 },
-  promptInput: { backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, fontSize: 16, color: '#111827', marginBottom: 24 },
+  promptCard: { 
+    backgroundColor: '#1E1B4B', 
+    width: '100%', 
+    borderRadius: 20, 
+    padding: 24, 
+    shadowColor: '#000', 
+    shadowOpacity: 0.3, 
+    shadowRadius: 10, 
+    elevation: 10, 
+    marginBottom: '40%',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  promptTitle: { fontSize: 18, fontWeight: '800', color: '#FFF', marginBottom: 8 },
+  promptSub: { fontSize: 14, color: '#94A3B8', marginBottom: 20 },
+  promptInput: { 
+    backgroundColor: 'rgba(255, 255, 255, 0.05)', 
+    borderRadius: 12, 
+    padding: 14, 
+    fontSize: 16, 
+    color: '#FFF', 
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
   promptActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
   promptBtnCancel: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10 },
-  promptBtnCancelText: { color: '#6B7280', fontWeight: '700', fontSize: 15 },
+  promptBtnCancelText: { color: '#94A3B8', fontWeight: '700', fontSize: 15 },
   promptBtnSubmit: { backgroundColor: '#6366F1', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, minWidth: 80, alignItems: 'center' },
   promptBtnSubmitText: { color: '#FFF', fontWeight: '700', fontSize: 15 },
 
   // Search result styles
-  searchDropdown: { backgroundColor: '#F9FAFB', borderRadius: 12, marginTop: -16, marginBottom: 20, borderWidth: 1, borderColor: '#E5E7EB', overflow: 'hidden' },
-  searchResultItem: { flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  searchDropdown: { 
+    backgroundColor: '#1E1B4B', 
+    borderRadius: 12, 
+    marginTop: -16, 
+    marginBottom: 20, 
+    borderWidth: 1, 
+    borderColor: 'rgba(255, 255, 255, 0.1)', 
+    overflow: 'hidden' 
+  },
+  searchResultItem: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    padding: 14, 
+    borderBottomWidth: 1, 
+    borderBottomColor: 'rgba(255, 255, 255, 0.05)' 
+  },
   searchResultIcon: { fontSize: 14, marginRight: 10 },
-  searchResultName: { flex: 1, fontSize: 13, fontWeight: '700', color: '#111827' },
+  searchResultName: { flex: 1, fontSize: 13, fontWeight: '700', color: '#FFF' },
   searchResultInvite: { fontSize: 10, fontWeight: '900', color: '#6366F1' },
+
+  // Typing Indicator
+  typingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 16,
+    marginBottom: 12,
+    backgroundColor: 'rgba(30, 30, 50, 0.4)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  typingIcon: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#6366F1',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  typingText: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontWeight: '600',
+  },
 });
 
