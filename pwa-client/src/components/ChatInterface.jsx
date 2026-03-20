@@ -22,6 +22,8 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [myNickname, setMyNickname] = useState('ANONYMOUS');
   const [replyingTo, setReplyingTo] = useState(null);
+  const [activeMessageMenu, setActiveMessageMenu] = useState(null);
+  const [lastReadAt, setLastReadAt] = useState(null);
   
   const [isCreatingPoll, setIsCreatingPoll] = useState(false);
   const [newPollQuestion, setNewPollQuestion] = useState('');
@@ -131,6 +133,13 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
       setMessages(filtered);
       fetchPolls(channel.id);
       
+      // Fetch Read Status
+      const { data: readRes } = await axios.get(`${BACKEND_URL}/api/channels/read-status?maskId=${propMaskId}&channelId=${channel.id}`);
+      setLastReadAt(readRes?.last_read_at);
+
+      // Update Read Status (Implicitly marks as read on enter)
+      updateReadStatus(channel.id);
+      
       supabase.removeAllChannels();
       
       // Messages Subscription
@@ -237,15 +246,33 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
   };
 
   const toggleReaction = async (msgId, emoji) => {
+    // Optimistic UI update
+    setMessages(prev => prev.map(msg => {
+      if (msg.id !== msgId) return msg;
+      const currentReactions = msg.message_reactions || [];
+      const userReaction = currentReactions.find(r => r.mask_id === propMaskId);
+      
+      let nextReactions;
+      if (userReaction && userReaction.emoji === emoji) {
+        // Toggle off
+        nextReactions = currentReactions.filter(r => r.id !== userReaction.id);
+      } else {
+        // Toggle on or switch (Only one reaction per user)
+        const filtered = currentReactions.filter(r => r.mask_id !== propMaskId);
+        nextReactions = [...filtered, { id: `opt-${Date.now()}`, message_id: msgId, mask_id: propMaskId, emoji }];
+      }
+      return { ...msg, message_reactions: nextReactions };
+    }));
+
     try {
       await axios.post(`${BACKEND_URL}/api/messages/react`, {
         userId: user.id,
         messageId: msgId,
         emoji: emoji
       });
-      // Realtime will sync back the updated reactions
     } catch (err) {
       console.error('Reaction error:', err);
+      // Revert if error? Standard practice is to wait for Realtime to fix it
     }
   };
 
@@ -260,6 +287,11 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
     } catch (err) {
       showAlert('Error', 'Could not delete message');
     }
+  };
+
+  const isEmojiOnly = (text) => {
+    const emojiRegex = /^(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])+$/g;
+    return emojiRegex.test(text.trim());
   };
 
   const renderContent = (text) => {
@@ -297,15 +329,74 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
         replyToId: replyingTo?.id || null
       });
       setReplyingTo(null);
+      updateReadStatus(selectedChannel.id);
     } catch (err) {
       showAlert('Error', 'Failed to send message');
     }
   };
 
-  const combinedItems = [
-    ...polls.map(p => ({ ...p, isPoll: true })),
-    ...messages
-  ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const updateReadStatus = async (channelId) => {
+    try {
+      await axios.post(`${BACKEND_URL}/api/channels/read-status`, {
+        maskId: propMaskId,
+        channelId: channelId
+      });
+    } catch (err) {
+      console.warn('Failed to update read status');
+    }
+  };
+
+  const formatDateLabel = (dateStr) => {
+    const d = new Date(dateStr);
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    if (d.toDateString() === today.toDateString()) return 'Today';
+    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+    
+    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  };
+
+  const combinedItems = (() => {
+    const items = [
+      ...polls.map(p => ({ ...p, isPoll: true })),
+      ...messages
+    ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    const result = [];
+    let unreadPillShown = false;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const nextItem = items[i + 1];
+
+      result.push(item);
+
+      // Unread logic: In reverse list, item is NEWER than nextItem
+      // If item is new (> lastReadAt) and nextItem is old (<= lastReadAt)
+      if (!unreadPillShown && lastReadAt && new Date(item.created_at) > new Date(lastReadAt)) {
+        if (!nextItem || new Date(nextItem.created_at) <= new Date(lastReadAt)) {
+          const unreadCount = items.filter(m => new Date(m.created_at) > new Date(lastReadAt)).length;
+          if (unreadCount > 0) {
+            result.push({ type: 'unread', count: unreadCount, id: `unread-${item.id}` });
+            unreadPillShown = true;
+          }
+        }
+      }
+
+      // Date logic
+      if (nextItem) {
+        if (new Date(item.created_at).toDateString() !== new Date(nextItem.created_at).toDateString()) {
+          result.push({ type: 'date', label: formatDateLabel(item.created_at), id: `date-${item.id}` });
+        }
+      } else if (items.length > 0) {
+        // Oldest item separator
+        result.push({ type: 'date', label: formatDateLabel(item.created_at), id: `date-start` });
+      }
+    }
+    return result;
+  })();
 
   const renderPoll = (poll) => {
     const totalVotes = poll.poll_votes?.length || 0;
@@ -359,7 +450,7 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
     },
     sidebarHeader: { padding: '32px 24px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' },
     sidebarTitle: { fontSize: '24px', fontWeight: '900', color: '#FFF', letterSpacing: '-1px' },
-    scrollArea: { flex: 1, overflowY: 'auto', padding: '16px' },
+    scrollArea: { flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '16px' },
     sectionLabel: { fontSize: '11px', fontWeight: '800', color: '#475569', letterSpacing: '2px', marginBottom: '16px', marginTop: '28px', textTransform: 'uppercase', paddingLeft: '8px' },
 
     groupCard: { padding: '20px', borderRadius: '24px', background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(168, 85, 247, 0.1) 100%)', border: '1px solid rgba(99, 102, 241, 0.2)', marginBottom: '16px' },
@@ -375,20 +466,24 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
       backgroundColor: expandedColleges[id] ? 'rgba(255,255,255,0.02)' : 'transparent',
     }),
 
-    header: { padding: window.innerWidth <= 768 ? '12px 20px' : '20px 32px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(15, 23, 42, 0.7)', backdropFilter: 'blur(10px)', zIndex: 50 },
-    messageList: { flex: 1, overflowY: 'auto', padding: window.innerWidth <= 768 ? '20px 16px' : '32px', display: 'flex', flexDirection: 'column-reverse', gap: '16px' },
-    bubble: (isMe) => ({ 
+    main: { flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#0F172A', position: 'relative', overflow: 'hidden' },
+    header: { padding: window.innerWidth <= 768 ? '6px 16px' : '10px 24px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(15, 23, 42, 0.7)', backdropFilter: 'blur(10px)', zIndex: 50 },
+    messageList: { flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: window.innerWidth <= 768 ? '4px 8px' : '8px 16px', display: 'flex', flexDirection: 'column-reverse', gap: '2px' },
+    bubble: (isMe, isEmojiOnly) => ({ 
       alignSelf: isMe ? 'flex-end' : 'flex-start', 
       maxWidth: window.innerWidth <= 768 ? '90%' : '85%', 
-      padding: '12px 16px', 
-      borderRadius: isMe ? '20px 20px 4px 20px' : '20px 20px 20px 4px', 
-      fontSize: '15px', 
-      lineHeight: '1.5', 
-      background: isMe ? 'linear-gradient(135deg, #6366F1 0%, #A855F7 100%)' : 'rgba(255,255,255,0.05)', 
+      width: 'fit-content',
+      padding: isEmojiOnly ? '0' : '4px 8px', 
+      borderRadius: isMe ? '12px 12px 4px 12px' : '12px 12px 12px 4px', 
+      fontSize: '13.5px', 
+      lineHeight: '1.4', 
+      background: isEmojiOnly ? 'transparent' : (isMe ? 'linear-gradient(135deg, #6366F1 0%, #A855F7 100%)' : 'rgba(255,255,255,0.05)'), 
       color: '#FFF', 
-      boxShadow: isMe ? '0 8px 20px -5px rgba(99, 102, 241, 0.4)' : 'none',
+      boxShadow: isMe ? '0 4px 12px -4px rgba(99, 102, 241, 0.3)' : 'none',
       position: 'relative',
-      marginBottom: '2px'
+      marginBottom: '0px',
+      overflowWrap: 'break-word',
+      wordWrap: 'break-word'
     }),
     actionStrip: (isMe) => ({
       display: 'flex',
@@ -415,7 +510,7 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
       gap: '6px',
       border: '1px solid rgba(255,255,255,0.05)'
     },
-    inputArea: { padding: '12px 16px', backgroundColor: 'transparent' },
+    inputArea: { padding: '8px 16px', backgroundColor: 'transparent' },
     inputContainer: { maxWidth: '1000px', margin: '0 auto', display: 'flex', gap: '10px', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '24px', padding: '6px 12px', border: '1px solid rgba(255, 255, 255, 0.1)', backdropFilter: 'blur(20px)' },
     input: { flex: 1, border: 'none', backgroundColor: 'transparent', padding: '10px 0', fontSize: '15px', color: '#FFF', outline: 'none', fontWeight: '500' },
 
@@ -425,9 +520,31 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
     pollProgress: { position: 'absolute', left: 0, top: 0, bottom: 0, transition: 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)' },
 
     modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(10px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' },
-    modal: { backgroundColor: '#1E293B', width: '100%', maxWidth: '500px', borderRadius: '40px', padding: '40px', border: '1px solid rgba(255,255,255,0.1)' },
+    modal: { backgroundColor: '#1E292B', width: '100%', maxWidth: '500px', borderRadius: '40px', padding: '40px', border: '1px solid rgba(255,255,255,0.1)' },
     modalTitle: { fontSize: '28px', fontWeight: '900', color: '#FFF', marginBottom: '24px' },
-    modalInput: { width: '100%', padding: '16px 20px', borderRadius: '16px', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#FFF', fontSize: '16px', outline: 'none', marginBottom: '16px' }
+    modalInput: { width: '100%', padding: '16px 20px', borderRadius: '16px', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#FFF', fontSize: '16px', outline: 'none', marginBottom: '16px' },
+
+    activeMenuOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' },
+    activeMenuCard: { backgroundColor: 'rgba(30, 41, 59, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '32px', width: '100%', maxWidth: '340px', padding: '24px', boxShadow: '0 20px 50px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: '8px' },
+    menuBtn: { width: '100%', padding: '16px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.05)', color: '#FFF', fontSize: '15px', fontWeight: '800', cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', transition: 'all 0.2s' },
+
+    separator: {
+      alignSelf: 'center',
+      margin: '12px 0 6px 0',
+      padding: '4px 12px',
+      borderRadius: '8px',
+      backgroundColor: '#182229',
+      border: 'none',
+      color: '#8696A0',
+      fontSize: '11.5px',
+      fontWeight: '500',
+      textTransform: 'none',
+      letterSpacing: '0.2px'
+    },
+    unreadPill: {
+      backgroundColor: '#182229',
+      color: '#8696A0'
+    }
   };
 
   return (
@@ -594,81 +711,169 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
           <>
             <div style={styles.messageList}>
               <AnimatePresence initial={false}>
-                {combinedItems.map((item) => {
+                {combinedItems.map((item, idx) => {
+                  if (item.type === 'date') {
+                    return (
+                      <div key={item.id} style={styles.separator}>
+                        {item.label}
+                      </div>
+                    );
+                  }
+                  if (item.type === 'unread') {
+                    return (
+                      <div key={item.id} style={{ ...styles.separator, ...styles.unreadPill }}>
+                        {item.count} UNREAD MESSAGES
+                      </div>
+                    );
+                  }
+
                   if (item.isPoll) return renderPoll(item);
 
                   const isMe = item.sender_id === propMaskId;
                   const displayName = item.profiles?.full_name || item.profiles?.username || item.profiles?.nickname || 'Anonymous';
+                  
+                  // In column-reverse, "previous in time" is the next item in the array
+                  const prevInTime = combinedItems[idx + 1];
+                  const isContinuation = prevInTime && prevInTime.sender_id === item.sender_id && !prevInTime.isPoll;
                   
                   return (
                     <motion.div 
                       key={item.id} 
                       initial={{ opacity: 0, y: 10 }} 
                       animate={{ opacity: 1, y: 0 }} 
-                      style={{ alignSelf: isMe ? 'flex-end' : 'flex-start', maxWidth: '90%', position: 'relative', display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start' }}
+                      style={{ 
+                        alignSelf: isMe ? 'flex-end' : 'flex-start', 
+                        maxWidth: '100%', 
+                        position: 'relative', 
+                        display: 'flex', 
+                        flexDirection: 'column', 
+                        alignItems: isMe ? 'flex-end' : 'flex-start', 
+                        marginTop: isContinuation ? '2px' : '6px',
+                        marginBottom: item.message_reactions?.length > 0 ? (isContinuation ? '10px' : '10px') : '0px'
+                      }}
                     >
-                      {!isMe && <div style={{ fontSize: '11px', fontWeight: '800', color: '#94A3B8', marginBottom: '4px', marginLeft: '12px' }}>{displayName.toUpperCase()}</div>}
+                      {!isMe && !isContinuation && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '1px', marginLeft: '12px' }}>
+                          <div style={{ width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#334155', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px' }}>
+                            {displayName.charAt(0).toUpperCase()}
+                          </div>
+                          <div style={{ fontSize: '11px', fontWeight: '900', color: isMe ? '#6366F1' : '#F472B6', letterSpacing: '0.2px' }}>
+                            ~ {displayName}
+                          </div>
+                        </div>
+                      )}
                       
                       <div 
-                        style={styles.bubble(isMe)}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          if (confirm('Delete this message?')) deleteMessage(item.id, isMe);
-                        }}
+                        style={styles.bubble(isMe, isEmojiOnly(item.content))}
+                        onClick={() => setActiveMessageMenu(item)}
+                        onDoubleClick={(e) => { e.stopPropagation(); toggleReaction(item.id, '❤️'); }}
                       >
-                        {/* Quoted Message */}
+                        {/* Quoted Message (Compact WhatsApp Style) */}
                         {item.reply && (
-                          <div style={{ backgroundColor: 'rgba(255,255,255,0.1)', padding: '8px 12px', borderRadius: '12px', borderLeft: '4px solid #6366F1', marginBottom: '8px', fontSize: '13px' }}>
-                            <div style={{ fontWeight: '900', color: '#6366F1', marginBottom: '2px', fontSize: '10px' }}>{item.reply.profiles?.nickname?.toUpperCase() || 'ANONYMOUS'}</div>
-                            <div style={{ opacity: 0.8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.reply.content}</div>
+                          <div style={{ 
+                            backgroundColor: 'rgba(255,255,255,0.06)', 
+                            padding: '6px 10px', 
+                            borderRadius: '8px', 
+                            borderLeft: '4px solid #818CF8', 
+                            marginBottom: '6px', 
+                            fontSize: '12px',
+                            width: '100%',
+                          }}>
+                            <div style={{ 
+                              fontWeight: '900', 
+                              color: '#818CF8', 
+                              fontSize: '10px', 
+                              letterSpacing: '0.4px',
+                              marginBottom: '2px'
+                            }}>
+                              {item.reply.sender_id === propMaskId ? 'You' : (item.reply.profiles?.nickname?.toUpperCase() || 'ANONYMOUS')}
+                            </div>
+                            <div style={{ 
+                              opacity: 0.9, 
+                              whiteSpace: 'nowrap', 
+                              overflow: 'hidden', 
+                              textOverflow: 'ellipsis',
+                              fontSize: '12.5px',
+                              fontWeight: '500',
+                              color: '#E2E8F0'
+                            }}>
+                              {item.reply.content}
+                            </div>
                           </div>
                         )}
 
-                        <div style={{ fontWeight: '500', wordBreak: 'break-word' }}>{renderContent(item.content)}</div>
-                        
-                        {/* Reactions Display */}
-                        {item.message_reactions?.length > 0 && (
-                          <div style={{ display: 'flex', gap: '6px', marginTop: '10px', flexWrap: 'wrap' }}>
-                            {Object.entries(
-                              item.message_reactions.reduce((acc, r) => {
-                                acc[r.emoji] = (acc[r.emoji] || 0) + 1;
-                                return acc;
-                              }, {})
-                            ).map(([emoji, count]) => (
-                              <div 
-                                key={emoji} 
-                                onClick={(e) => { e.stopPropagation(); toggleReaction(item.id, emoji); }}
-                                style={styles.reactionBadge}
-                              >
-                                <span>{emoji}</span>
-                                <span style={{ opacity: 0.8 }}>{count}</span>
-                              </div>
-                            ))}
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <div style={{ 
+                            fontWeight: '500', 
+                            whiteSpace: 'pre-wrap', 
+                            display: 'flex', 
+                            flexWrap: 'wrap', 
+                            alignItems: 'flex-end', 
+                            justifyContent: 'flex-start', 
+                            gap: '0px',
+                            fontSize: isEmojiOnly(item.content) ? '32px' : '15px' 
+                          }}>
+                            {isEmojiOnly(item.content) ? (
+                              <span>{item.content}</span>
+                            ) : (
+                              <span>{renderContent(item.content)}</span>
+                            )}
+                            <span style={{ 
+                              fontSize: '9px', 
+                              opacity: 0.6, 
+                              whiteSpace: 'nowrap', 
+                              marginLeft: 'auto', 
+                              alignSelf: 'flex-end',
+                              paddingBottom: '0px', 
+                              paddingLeft: '6px',
+                              color: '#94A3B8',
+                              fontWeight: '600',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}>
+                              {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).toLowerCase()}
+                            </span>
                           </div>
-                        )}
 
-                        <div style={{ fontSize: '10px', marginTop: '6px', opacity: 0.4, textAlign: isMe ? 'right' : 'left', letterSpacing: '0.5px' }}>
-                            {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </div>
-
-                      {/* Action Strip */}
-                      <div style={styles.actionStrip(isMe)}>
-                        <div 
-                          onClick={() => setReplyingTo(item)}
-                          style={{ cursor: 'pointer', fontSize: '10px', fontWeight: '900', color: '#818CF8', letterSpacing: '1px' }}
-                        >REPLY</div>
-                        <div style={{ width: '1px', height: '10px', backgroundColor: 'rgba(255,255,255,0.1)' }} />
-                        <div style={{ display: 'flex', gap: '10px' }}>
-                          {['👍', '❤️', '🔥', '😂'].map(emoji => (
-                            <span 
-                              key={emoji} 
-                              onClick={() => toggleReaction(item.id, emoji)}
-                              style={{ cursor: 'pointer', fontSize: '14px', transition: 'transform 0.1s' }}
-                              onMouseDown={e => e.currentTarget.style.transform = 'scale(1.2)'}
-                              onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
-                            >{emoji}</span>
-                          ))}
+                          {/* Reactions Display (Circular Overlapping Badges) */}
+                          {item.message_reactions?.length > 0 && (
+                            <div style={{ 
+                              position: 'absolute', 
+                              bottom: '-10px', 
+                              right: isMe ? '12px' : 'auto', 
+                              left: isMe ? 'auto' : '12px', 
+                              display: 'flex', 
+                              gap: '-4px', 
+                              zIndex: 10 
+                            }}>
+                              {Object.entries(
+                                item.message_reactions.reduce((acc, r) => {
+                                  acc[r.emoji] = (acc[r.emoji] || 0) + 1;
+                                  return acc;
+                                }, {})
+                              ).map(([emoji, count]) => (
+                                <div 
+                                  key={emoji} 
+                                  onClick={(e) => { e.stopPropagation(); toggleReaction(item.id, emoji); }}
+                                  style={{ 
+                                    backgroundColor: '#1E293B', 
+                                    border: '1px solid rgba(255,255,255,0.1)', 
+                                    borderRadius: '50px', 
+                                    padding: '2px 6px', 
+                                    fontSize: '10px', 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: '4px', 
+                                    boxShadow: '0 4px 8px rgba(0,0,0,0.4)',
+                                    cursor: 'pointer' 
+                                  }}
+                                >
+                                  <span>{emoji}</span>
+                                  {count > 1 && <span style={{ fontSize: '9px', opacity: 0.8, fontWeight: '800' }}>{count}</span>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </motion.div>
@@ -763,6 +968,64 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
                 <button onClick={() => setIsCreatingPoll(false)} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)', background: 'none', color: '#FFF', fontWeight: '800', cursor: 'pointer' }}>Cancel</button>
                 <button onClick={broadcastPoll} style={{ flex: 2, padding: '16px', borderRadius: '16px', border: 'none', background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)', color: '#FFF', fontWeight: '800', cursor: 'pointer' }}>Broadcast Pulse →</button>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {activeMessageMenu && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={styles.activeMenuOverlay}
+            onClick={() => setActiveMessageMenu(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+              style={styles.activeMenuCard}
+              onClick={e => e.stopPropagation()}
+            >
+              <div style={{ fontSize: '11px', fontWeight: '900', color: '#6366F1', marginBottom: '16px', letterSpacing: '2px' }}>MESSAGE ACTIONS</div>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', backgroundColor: 'rgba(255,255,255,0.05)', padding: '16px', borderRadius: '20px', marginBottom: '12px' }}>
+                {['👍', '❤️', '🔥', '😂', '😮'].map(emoji => (
+                   <span 
+                    key={emoji} 
+                    onClick={() => { toggleReaction(activeMessageMenu.id, emoji); setActiveMessageMenu(null); }}
+                    style={{ fontSize: '24px', cursor: 'pointer', transition: 'transform 0.2s' }}
+                    onMouseDown={e => e.currentTarget.style.transform = 'scale(1.3)'}
+                    onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
+                   >{emoji}</span>
+                ))}
+              </div>
+
+              <button 
+                style={styles.menuBtn}
+                onClick={() => { setReplyingTo(activeMessageMenu); setActiveMessageMenu(null); }}
+              >
+                <span style={{ fontSize: '18px' }}>↩️</span> 
+                <span>Reply to Message</span>
+              </button>
+
+              <button 
+                style={{ ...styles.menuBtn, color: '#EF4444' }}
+                onClick={() => {
+                  if (confirm('Delete this message?')) {
+                    deleteMessage(activeMessageMenu.id, activeMessageMenu.sender_id === propMaskId);
+                    setActiveMessageMenu(null);
+                  }
+                }}
+              >
+                <span style={{ fontSize: '18px' }}>🗑️</span> 
+                <span>Delete message</span>
+              </button>
+              
+              <button 
+                style={{ ...styles.menuBtn, marginTop: '8px', backgroundColor: 'transparent', opacity: 0.5 }}
+                onClick={() => setActiveMessageMenu(null)}
+              >
+                <span>Cancel</span>
+              </button>
             </motion.div>
           </motion.div>
         )}

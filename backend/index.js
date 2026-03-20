@@ -1064,6 +1064,56 @@ app.delete('/api/polls/:pollId', async (req, res) => {
 });
 
 // Delete message for me
+// Channel Read Status
+app.get('/api/channels/read-status', async (req, res) => {
+  const { maskId, channelId } = req.query;
+
+  if (!maskId || !channelId) {
+    return res.status(400).json({ error: 'Mask ID and Channel ID are required' });
+  }
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('channel_read_status')
+      .select('last_read_at')
+      .eq('mask_id', maskId)
+      .eq('channel_id', channelId)
+      .maybeSingle();
+
+    if (error) throw error;
+    res.json(data || { last_read_at: null });
+  } catch (error) {
+    console.error('[BACKEND] Fetch read status error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/channels/read-status', async (req, res) => {
+  const { maskId, channelId, lastReadAt } = req.body;
+
+  if (!maskId || !channelId) {
+    return res.status(400).json({ error: 'Mask ID and Channel ID are required' });
+  }
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('channel_read_status')
+      .upsert({ 
+        mask_id: maskId, 
+        channel_id: channelId, 
+        last_read_at: lastReadAt || new Date().toISOString() 
+      }, { onConflict: 'mask_id,channel_id' })
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    console.error('[BACKEND] Update read status error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.post('/api/messages/:messageId/delete-for-me', async (req, res) => {
   const { messageId } = req.params;
   const { maskId } = req.body;
