@@ -441,11 +441,11 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
   };
 
   const styles = {
-    container: { display: 'flex', height: '100%', backgroundColor: '#0F172A', fontFamily: '"Outfit", sans-serif', overflow: 'hidden', position: 'relative' },
+    container: { display: 'flex', height: '100%', backgroundColor: '#0B141A', fontFamily: '"Outfit", sans-serif', overflow: 'hidden', position: 'relative' },
     sidebar: {
       position: window.innerWidth <= 768 ? 'absolute' : 'relative',
       left: 0, top: 0, bottom: 0,
-      width: '320px', backgroundColor: 'rgba(15, 23, 42, 0.95)', backdropFilter: 'blur(30px)', borderRight: '1px solid rgba(255, 255, 255, 0.05)',
+      width: '320px', backgroundColor: '#111B21', borderRight: '1px solid rgba(255, 255, 255, 0.05)',
       display: 'flex', flexDirection: 'column', zIndex: 100
     },
     sidebarHeader: { padding: '32px 24px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' },
@@ -466,20 +466,21 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
       backgroundColor: expandedColleges[id] ? 'rgba(255,255,255,0.02)' : 'transparent',
     }),
 
-    main: { flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#0F172A', position: 'relative', overflow: 'hidden' },
-    header: { padding: window.innerWidth <= 768 ? '6px 16px' : '10px 24px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(15, 23, 42, 0.7)', backdropFilter: 'blur(10px)', zIndex: 50 },
+    main: { flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#0B141A', position: 'relative', overflow: 'hidden' },
+    header: { padding: window.innerWidth <= 768 ? '6px 16px' : '10px 24px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#111B21', zIndex: 50 },
     messageList: { flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: window.innerWidth <= 768 ? '4px 8px' : '8px 16px', display: 'flex', flexDirection: 'column-reverse', gap: '2px' },
     bubble: (isMe, isEmojiOnly) => ({ 
       alignSelf: isMe ? 'flex-end' : 'flex-start', 
       maxWidth: window.innerWidth <= 768 ? '90%' : '85%', 
+      minWidth: isEmojiOnly ? '0' : '65px',
       width: 'fit-content',
       padding: isEmojiOnly ? '0' : '4px 8px', 
       borderRadius: isMe ? '12px 12px 4px 12px' : '12px 12px 12px 4px', 
       fontSize: '13.5px', 
       lineHeight: '1.4', 
-      background: isEmojiOnly ? 'transparent' : (isMe ? 'linear-gradient(135deg, #6366F1 0%, #A855F7 100%)' : 'rgba(255,255,255,0.05)'), 
-      color: '#FFF', 
-      boxShadow: isMe ? '0 4px 12px -4px rgba(99, 102, 241, 0.3)' : 'none',
+      background: isEmojiOnly ? 'transparent' : (isMe ? '#005C4B' : '#202C33'), 
+      color: '#E9EDEF', 
+      boxShadow: isEmojiOnly ? 'none' : (isMe ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'),
       position: 'relative',
       marginBottom: '0px',
       overflowWrap: 'break-word',
@@ -771,31 +772,35 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
                         {/* Quoted Message (Compact WhatsApp Style) */}
                         {item.reply && (
                           <div style={{ 
-                            backgroundColor: 'rgba(255,255,255,0.06)', 
-                            padding: '6px 10px', 
+                            backgroundColor: 'rgba(0,0,0,0.15)', 
+                            padding: '3px 8px', 
                             borderRadius: '8px', 
-                            borderLeft: '4px solid #818CF8', 
-                            marginBottom: '6px', 
-                            fontSize: '12px',
+                            borderLeft: '3px solid #00A884', 
+                            marginBottom: '4px', 
+                            fontSize: '11px',
                             width: '100%',
                           }}>
                             <div style={{ 
                               fontWeight: '900', 
-                              color: '#818CF8', 
-                              fontSize: '10px', 
+                              color: '#00A884', 
+                              fontSize: '9px', 
                               letterSpacing: '0.4px',
-                              marginBottom: '2px'
+                              marginBottom: '0px',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis'
                             }}>
                               {item.reply.sender_id === propMaskId ? 'You' : (item.reply.profiles?.nickname?.toUpperCase() || 'ANONYMOUS')}
                             </div>
                             <div style={{ 
-                              opacity: 0.9, 
+                              opacity: 0.8, 
                               whiteSpace: 'nowrap', 
                               overflow: 'hidden', 
                               textOverflow: 'ellipsis',
-                              fontSize: '12.5px',
+                              fontSize: '11.5px',
                               fontWeight: '500',
-                              color: '#E2E8F0'
+                              color: '#D1D7DB',
+                              lineHeight: '1.2'
                             }}>
                               {item.reply.content}
                             </div>

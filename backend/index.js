@@ -76,7 +76,7 @@ const supabaseAdmin = createClient(
 app.post('/api/auth/mask', maskLimiter, async (req, res) => {
   const { userId } = req.body;
   console.log(`[BACKEND] Mask request received for user: ${userId}`);
-  
+
   if (!userId) {
     return res.status(400).json({ error: 'User ID is required' });
   }
@@ -113,14 +113,14 @@ app.post('/api/auth/mask', maskLimiter, async (req, res) => {
 // 0. CUSTOM AUTH SYSTEM (No Email / No Rate Limit)
 app.post('/api/auth/register', authLimiter, async (req, res) => {
   const { username, password, fullName } = req.body;
-  
+
   if (!username || !password) {
     return res.status(400).json({ error: 'Name and password are required' });
   }
 
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
-    
+
     const { data, error } = await supabaseAdmin
       .from('user_accounts')
       .insert([{ username, password_hash: hashedPassword }])
@@ -138,8 +138,8 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const maskId = generateAnonymousId(data.id);
     await supabaseAdmin
       .from('profiles')
-      .upsert({ 
-        mask_id: maskId, 
+      .upsert({
+        mask_id: maskId,
         nickname: username,
         username: username,
         full_name: fullName || null,
@@ -160,7 +160,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { username, password } = req.body;
-  
+
   if (!username || !password) {
     return res.status(400).json({ error: 'Name and password are required' });
   }
@@ -185,8 +185,8 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     const maskId = generateAnonymousId(user.id);
     const { data: profile } = await supabaseAdmin
       .from('profiles')
-      .upsert({ 
-        mask_id: maskId, 
+      .upsert({
+        mask_id: maskId,
         username: username,
         last_seen: new Date().toISOString()
       }, { onConflict: 'mask_id' })
@@ -215,7 +215,7 @@ app.delete('/api/auth/account/:userId', authLimiter, async (req, res) => {
 
   try {
     const maskId = generateAnonymousId(userId);
-    
+
     console.log(`[🗑️ AUTH] Starting Scrub for User ${userId} (Ghost: ${maskId})`);
 
     // 1. Scrub Associated Data (Prevent FK constraints)
@@ -286,7 +286,7 @@ app.post('/api/auth/delete', async (req, res) => {
       .from('user_accounts')
       .delete({ count: 'exact' })
       .eq('id', userId);
-    
+
     if (accError) throw accError;
     console.log(`   - Accounts scrubbed: ${accCount || 0}`);
     // 2. Delete profile (anonymized data)
@@ -397,13 +397,13 @@ app.get('/api/groups/private', async (req, res) => {
       .eq('mask_id', maskId);
 
     if (error) throw error;
-    
+
     // Map out the channels and ensure they look like regular channels
     const formattedGroups = data.map(d => ({
       ...d.channels,
       is_private: true
     }));
-    
+
     res.json(formattedGroups);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -413,28 +413,28 @@ app.get('/api/groups/private', async (req, res) => {
 app.post('/api/groups', async (req, res) => {
   const { name, maskId } = req.body;
   if (!name || !maskId) return res.status(400).json({ error: 'Name and maskId required' });
-  
+
   try {
     // 1. Create channel marking it as private
     const { data: channel, error: chErr } = await supabaseAdmin
       .from('channels')
-      .insert([{ 
-        name, 
-        is_private: true, 
-        created_by: maskId, 
+      .insert([{
+        name,
+        is_private: true,
+        created_by: maskId,
         status: 'active',
         icon: '🔒'
       }])
       .select()
       .single();
-      
+
     if (chErr) throw chErr;
 
     // 2. Add creator to channel_members
     await supabaseAdmin
       .from('channel_members')
       .insert([{ channel_id: channel.id, mask_id: maskId }]);
-      
+
     res.status(201).json(channel);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -444,9 +444,9 @@ app.post('/api/groups', async (req, res) => {
 app.post('/api/groups/:channelId/invite', async (req, res) => {
   const { channelId } = req.params;
   const { username, inviterMaskId } = req.body;
-  
+
   if (!username || !inviterMaskId) return res.status(400).json({ error: 'Username and inviterMaskId required' });
-  
+
   try {
     // 1. Verify inviter is in the group
     const { data: memberCheck, error: memErr } = await supabaseAdmin
@@ -454,7 +454,7 @@ app.post('/api/groups/:channelId/invite', async (req, res) => {
       .select('*')
       .eq('channel_id', channelId)
       .eq('mask_id', inviterMaskId);
-      
+
     if (!memberCheck || memberCheck.length === 0) return res.status(403).json({ error: 'Unauthorized to invite' });
 
     // 2. Resolve target user
@@ -463,7 +463,7 @@ app.post('/api/groups/:channelId/invite', async (req, res) => {
       .select('id')
       .ilike('username', username)
       .single();
-      
+
     if (!targetUser) return res.status(404).json({ error: 'User not found' });
     const targetMaskId = generateAnonymousId(targetUser.id);
 
@@ -529,7 +529,7 @@ app.post('/api/groups/invites/:id/:action', async (req, res) => {
       await supabaseAdmin
         .from('channel_members')
         .insert([{ channel_id: invite.channel_id, mask_id: invite.invitee_mask_id }]);
-      
+
       // 2. Update status
       await supabaseAdmin.from('group_invitations').update({ status: 'accepted' }).eq('id', id);
     } else {
@@ -601,8 +601,8 @@ app.post('/api/messages', messageRateLimit, async (req, res) => {
     // 1. Ensure a profile exists (Fixes Foreign Key constraint)
     const { error: profileError } = await supabaseAdmin
       .from('profiles')
-      .upsert({ 
-        mask_id: maskId, 
+      .upsert({
+        mask_id: maskId,
         nickname: 'Anonymous',
         last_seen: new Date().toISOString()
       }, { onConflict: 'mask_id' });
@@ -857,7 +857,7 @@ app.post('/api/messages/:id/report', async (req, res) => {
     if (reportedBy.length >= 10) {
       // 10 Strikes -> Auto Delete & Notify
       await supabaseAdmin.from('messages').delete().eq('id', id);
-      
+
       await supabaseAdmin.from('notifications').insert({
         mask_id: msg.sender_id,
         message: '🚨 SYSTEM ALERT: Your message was deleted after receiving 10 community reports for violating campus guidelines.'
@@ -866,11 +866,11 @@ app.post('/api/messages/:id/report', async (req, res) => {
       return res.json({ success: true, action: 'deleted' });
     } else {
       // Just update report count && flag as reported for standard mods
-      await supabaseAdmin.from('messages').update({ 
+      await supabaseAdmin.from('messages').update({
         reported_by: reportedBy,
         is_reported: true
       }).eq('id', id);
-      
+
       return res.json({ success: true, action: 'reported', count: reportedBy.length });
     }
   } catch (error) {
@@ -892,7 +892,7 @@ app.get('/api/notifications', async (req, res) => {
       .select('*')
       .eq('mask_id', maskId)
       .eq('is_read', false);
-      
+
     if (error) throw error;
     res.json(data || []);
   } catch (error) {
@@ -909,7 +909,7 @@ app.post('/api/notifications/mark-read', async (req, res) => {
       .from('notifications')
       .update({ is_read: true })
       .in('id', ids);
-      
+
     if (error) throw error;
     res.json({ success: true });
   } catch (error) {
@@ -1009,10 +1009,10 @@ app.post('/api/polls/vote', async (req, res) => {
     // Using upsert allows a user to "change" their vote to a new option
     const { data, error } = await supabaseAdmin
       .from('poll_votes')
-      .upsert({ 
-        poll_id: pollId, 
-        mask_id: maskId, 
-        option_index: optionIndex 
+      .upsert({
+        poll_id: pollId,
+        mask_id: maskId,
+        option_index: optionIndex
       }, { onConflict: 'poll_id,mask_id' })
       .select()
       .single();
@@ -1080,11 +1080,14 @@ app.get('/api/channels/read-status', async (req, res) => {
       .eq('channel_id', channelId)
       .maybeSingle();
 
-    if (error) throw error;
+    if (error) {
+      console.error('[BACKEND] Fetch read status error Detail:', JSON.stringify(error, null, 2));
+      throw error;
+    }
     res.json(data || { last_read_at: null });
   } catch (error) {
-    console.error('[BACKEND] Fetch read status error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('[BACKEND] Fetch read status error:', error.message || error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
   }
 });
 
@@ -1098,19 +1101,21 @@ app.post('/api/channels/read-status', async (req, res) => {
   try {
     const { data, error } = await supabaseAdmin
       .from('channel_read_status')
-      .upsert({ 
-        mask_id: maskId, 
-        channel_id: channelId, 
-        last_read_at: lastReadAt || new Date().toISOString() 
-      }, { onConflict: 'mask_id,channel_id' })
+      .upsert(
+        { mask_id: maskId, channel_id: channelId, last_read_at: lastReadAt || new Date().toISOString() },
+        { onConflict: 'mask_id,channel_id' }
+      )
       .select()
-      .single();
+      .maybeSingle();
 
-    if (error) throw error;
-    res.json(data);
+    if (error) {
+      console.error('[BACKEND] Update read status error Detail:', JSON.stringify(error, null, 2));
+      throw error;
+    }
+    res.json({ success: true, data });
   } catch (error) {
-    console.error('[BACKEND] Update read status error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('[BACKEND] Update read status error:', error.message || error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
   }
 });
 
