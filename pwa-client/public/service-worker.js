@@ -19,6 +19,7 @@ self.addEventListener('fetch', (event) => {
     return; // Let the browser handle this naturally
   }
 
+
   event.respondWith(
     fetch(event.request)
       .catch(async () => {
