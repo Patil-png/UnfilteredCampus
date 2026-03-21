@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Alert,
+  View, Text, TouchableOpacity, StyleSheet,
   ActivityIndicator, Dimensions, StatusBar, SafeAreaView, TextInput,
   KeyboardAvoidingView, Platform, ScrollView
 } from 'react-native';
@@ -8,6 +8,8 @@ import { supabase } from '../supabaseClient';
 import Checkbox from 'expo-checkbox';
 import axios from 'axios';
 import CustomAlert from '../components/CustomAlert';
+import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.243:5000';
 
@@ -53,7 +55,6 @@ export default function LoginScreen({ onLoginSuccess, initialMode = 'signup' }) 
       });
 
       if (response.data.user) {
-        // Success! Pass the user object and maskId to App.js
         onLoginSuccess(response.data.user, isLogin, response.data.maskId);
       }
     } catch (error) {
@@ -66,15 +67,23 @@ export default function LoginScreen({ onLoginSuccess, initialMode = 'signup' }) 
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FAFAFA" />
+      <StatusBar barStyle="dark-content" backgroundColor="#FDFBF7" />
 
-      {/* Dynamic Decorative orbs */}
-      <View style={[styles.orbTopRight, isLogin ? { backgroundColor: '#F0FDF4' } : { backgroundColor: '#EEF2FF' }]} />
-      <View style={[styles.orbBottomLeft, isLogin ? { backgroundColor: '#F1F5F9' } : { backgroundColor: '#FFF7ED' }]} />
+      {/* Decorative High-Key Background Orbs */}
+      <View style={styles.orbContainer}>
+        <LinearGradient
+          colors={['rgba(99, 102, 241, 0.08)', 'transparent']}
+          style={styles.orb1}
+        />
+        <LinearGradient
+          colors={['rgba(217, 119, 6, 0.05)', 'transparent']}
+          style={styles.orb2}
+        />
+      </View>
 
       <SafeAreaView style={styles.safe}>
         <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
           style={{ flex: 1 }}
         >
           <ScrollView 
@@ -82,153 +91,123 @@ export default function LoginScreen({ onLoginSuccess, initialMode = 'signup' }) 
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
-            <View style={styles.content}>
-
-          {/* Meta Badge */}
-          <View style={[styles.betaBadge, isLogin && { backgroundColor: '#10B981' }]}>
-            <Text style={styles.betaText}>{isLogin ? '✦ SECURE LOGIN' : '✦ JOIN CAMPUS'}</Text>
-          </View>
-
-          {/* Hero */}
-          <View style={[styles.logoWrap, isLogin && { borderColor: '#E5E7EB', backgroundColor: '#F8FAFC' }]}>
-            <Text style={styles.logoEmoji}>{isLogin ? '🔑' : '🎓'}</Text>
-          </View>
-          <Text style={styles.appName}>{isLogin ? 'Welcome Back' : 'Unfiltered'}</Text>
-          <Text style={styles.tagline}>
-            {isLogin ? 'Sign in to your anonymous account' : 'Join the campus community hub'}
-          </Text>
-
-          {/* Value Props - ONLY FOR SIGNUP */}
-          {!isLogin && (
-            <View style={styles.pillsRow}>
-              {['Anonymous', 'Safe', 'Real Talk'].map((tag, i) => (
-                <View key={i} style={[styles.pill, i === 2 && styles.pillAccent]}>
-                  <Text style={[styles.pillText, i === 2 && styles.pillTextAccent]}>{tag}</Text>
+            <View style={styles.card}>
+              <View style={styles.content}>
+                
+                <View style={styles.betaBadge}>
+                  <Text style={styles.betaText}>✧ {isLogin ? 'ACCESS AUTHORIZED' : 'SECURITY CLEARANCE'}</Text>
                 </View>
-              ))}
-            </View>
-          )}
 
-          {/* Feature Cards - ONLY FOR SIGNUP */}
-          {!isLogin && (
-            <View style={styles.featureCards}>
-              {[
-                { emoji: '🛡️', title: 'Stay Hidden', desc: 'Your identity is never stored or revealed' },
-                { emoji: '🏛️', title: 'Your Campus', desc: 'Find your class and join the conversation' },
-                { emoji: '💬', title: 'Speak Freely', desc: 'No consequences. Just honest campus talk' },
-              ].map((f, i) => (
-                <View key={i} style={styles.featureRow}>
-                  <View style={styles.featureIconBox}><Text style={styles.featureEmoji}>{f.emoji}</Text></View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.featureTitle}>{f.title}</Text>
-                    <Text style={styles.featureDesc}>{f.desc}</Text>
+                <View style={styles.logoWrap}>
+                  <Text style={styles.logoEmoji}>{isLogin ? '❈' : '✦'}</Text>
+                </View>
+
+                <Text style={styles.appName}>{isLogin ? 'Welcome home.' : 'Start fresh.'}</Text>
+                <Text style={styles.tagline}>
+                  {isLogin ? 'Return to your secure campus hub.' : 'Create your anonymous digital footprint.'}
+                </Text>
+
+                <View style={styles.form}>
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.inputLabel}>IDENTITY</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="e.g. shadow_student"
+                      placeholderTextColor="#94A3B8"
+                      value={username}
+                      onChangeText={setUsername}
+                      autoCapitalize="none"
+                    />
+                  </View>
+
+                  {!isLogin && (
+                    <View style={styles.inputContainer}>
+                      <Text style={styles.inputLabel}>FULL NAME (PRIVATE)</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Optional real name"
+                        placeholderTextColor="#94A3B8"
+                        value={fullName}
+                        onChangeText={setFullName}
+                      />
+                    </View>
+                  )}
+
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.inputLabel}>ACCESS KEY</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="••••••••"
+                      placeholderTextColor="#94A3B8"
+                      value={password}
+                      onChangeText={setPassword}
+                      secureTextEntry
+                    />
                   </View>
                 </View>
-              ))}
-            </View>
-          )}
 
-          {/* Auth Form */}
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-            <View style={styles.form}>
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>ANONYMOUS NAME</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. CampusGhost"
-                  placeholderTextColor="#9CA3AF"
-                  value={username}
-                  onChangeText={setUsername}
-                  autoCapitalize="none"
-                />
-              </View>
+                <TouchableOpacity
+                  style={styles.consentRow}
+                  onPress={() => setAgreed(!agreed)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.checkbox, agreed && styles.checkboxActive]}>
+                    {agreed && <Text style={{ color: '#FFF', fontSize: 13 }}>✓</Text>}
+                  </View>
+                  <Text style={styles.consentText}>
+                    Agree to the <Text style={{ color: '#1E293B', fontWeight: '800' }}>Campus Protocol</Text>
+                  </Text>
+                </TouchableOpacity>
 
-              {!isLogin && (
-                <View style={styles.inputContainer}>
-                  <Text style={styles.inputLabel}>REAL NAME (OPTIONAL)</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g. Alex Johnson"
-                    placeholderTextColor="#9CA3AF"
-                    value={fullName}
-                    onChangeText={setFullName}
-                  />
+                <TouchableOpacity
+                  onPress={handleAuthAction}
+                  disabled={loading || !agreed}
+                  activeOpacity={0.9}
+                  style={{ marginTop: 24 }}
+                >
+                  <LinearGradient
+                    colors={isLogin ? ['#1E293B', '#0F172A'] : ['#6366F1', '#4F46E5']}
+                    style={[
+                      styles.ctaBtn, 
+                      (!agreed || !username || !password) && styles.ctaBtnDisabled
+                    ]}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="#FFF" />
+                    ) : (
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Text style={styles.ctaBtnText}>
+                          {isLogin ? 'Enter Hub' : 'Initialize Identity'}
+                        </Text>
+                        <Text style={styles.ctaBtnArrow}>→</Text>
+                      </View>
+                    )}
+                  </LinearGradient>
+                </TouchableOpacity>
+
+                <View style={styles.toggleArea}>
+                  <Text style={styles.toggleDesc}>{isLogin ? "New here?" : "Already part of the hub?"}</Text>
+                  <TouchableOpacity 
+                    style={styles.toggleBtn} 
+                    onPress={() => {
+                      setIsLogin(!isLogin);
+                      setUsername('');
+                      setPassword('');
+                      setFullName('');
+                      setAgreed(false);
+                    }}
+                  >
+                    <Text style={styles.toggleText}>
+                      {isLogin ? "Join the community" : "Login securely"}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
-              )}
 
-              <View style={styles.inputContainer}>
-                <Text style={[styles.inputLabel, isLogin && { color: '#10B981' }]}>PASSWORD</Text>
-                <TextInput
-                  style={[styles.input, isLogin && { borderColor: '#D1FAE5' }]}
-                  placeholder="••••••••"
-                  placeholderTextColor="#9CA3AF"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                />
               </View>
             </View>
-          </KeyboardAvoidingView>
-
-          {/* Consent - ONLY FOR SIGNUP */}
-          {!isLogin && (
-            <TouchableOpacity
-              style={styles.consentRow}
-              onPress={() => setAgreed(!agreed)}
-              activeOpacity={0.7}
-            >
-              <Checkbox
-                style={styles.checkbox}
-                value={agreed}
-                onValueChange={setAgreed}
-                color={agreed ? '#6366F1' : undefined}
-              />
-              <Text style={styles.consentText}>
-                I agree to the{' '}
-                <Text style={styles.consentLink}>Community Guidelines</Text>
-                {' '}and will be respectful.
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {/* CTA */}
-          <TouchableOpacity
-            style={[
-              styles.ctaBtn, 
-              isLogin ? { backgroundColor: '#111827' } : { backgroundColor: '#6366F1' },
-              (!isLogin && (!agreed || !username || !password)) && styles.ctaBtnDisabled,
-              (isLogin && (!username || !password)) && styles.ctaBtnDisabled,
-            ]}
-            onPress={handleAuthAction}
-            disabled={loading || (!isLogin && !agreed)}
-            activeOpacity={0.9}
-          >
-            {loading ? (
-              <ActivityIndicator color="#FFF" />
-            ) : (
-              <>
-                <Text style={styles.ctaBtnText}>
-                  {isLogin ? 'Sign In' : 'Create & Enter'}
-                </Text>
-                <Text style={styles.ctaBtnArrow}>→</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          {/* Toggle Login/Signup */}
-          <TouchableOpacity 
-            style={styles.toggleBtn} 
-            onPress={() => setIsLogin(!isLogin)}
-          >
-            <Text style={styles.toggleText}>
-              {isLogin ? "New here? Create an account" : "Already have an account? Login"}
-            </Text>
-          </TouchableOpacity>
-
-            </View>
-
+            
             <View style={styles.footer}>
-              <Text style={styles.footerText}>SECURE • ENCRYPTED • ANONYMOUS</Text>
+              <Text style={styles.footerText}>PRIVATE • SECURE • UNFILTERED</Text>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -246,100 +225,83 @@ export default function LoginScreen({ onLoginSuccess, initialMode = 'signup' }) 
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FAFAFA' },
+  container: { flex: 1, backgroundColor: '#FDFBF7' },
+  orbContainer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden' },
+  orb1: {
+    position: 'absolute', top: -150, right: -150,
+    width: 450, height: 450, borderRadius: 225,
+  },
+  orb2: {
+    position: 'absolute', bottom: -200, left: -150,
+    width: 600, height: 600, borderRadius: 300,
+  },
   safe: { flex: 1 },
-
-  // Decorative background orbs
-  orbTopRight: {
-    position: 'absolute', top: -80, right: -80,
-    width: 260, height: 260, borderRadius: 130,
-    backgroundColor: '#EEF2FF',
+  scrollContent: { flexGrow: 1, justifyContent: 'center', padding: 24 },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 48,
+    shadowColor: '#8B5CF6',
+    shadowOffset: { width: 0, height: 20 },
+    shadowOpacity: 0.06,
+    shadowRadius: 40,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.03)',
   },
-  orbBottomLeft: {
-    position: 'absolute', bottom: -100, left: -60,
-    width: 300, height: 300, borderRadius: 150,
-    backgroundColor: '#FFF7ED',
-  },
-
-  content: { paddingHorizontal: 28, paddingTop: 32, paddingBottom: 40 },
-  scrollContent: { flexGrow: 1, justifyContent: 'center' },
-
+  content: { padding: 16 },
   betaBadge: {
-    backgroundColor: '#6366F1', alignSelf: 'flex-start',
-    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5, marginBottom: 28,
+    backgroundColor: 'rgba(99, 102, 241, 0.06)', alignSelf: 'flex-start',
+    borderRadius: 100, paddingHorizontal: 12, paddingVertical: 6, marginBottom: 12,
+    borderWidth: 1, borderColor: 'rgba(99, 102, 241, 0.1)',
   },
-  betaText: { fontSize: 10, fontWeight: '900', color: '#FFF', letterSpacing: 2 },
-
-  loginHeader: { fontSize: 32, color: '#111827' },
-
+  betaText: { fontSize: 9, fontWeight: '800', color: '#6366F1', letterSpacing: 1 },
   logoWrap: {
-    width: 80, height: 80, borderRadius: 28,
-    backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center',
-    marginBottom: 20, borderWidth: 2, borderColor: '#C7D2FE',
-    shadowColor: '#6366F1', shadowOpacity: 0.15, shadowRadius: 15, elevation: 4,
+    width: 50, height: 50, borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    justifyContent: 'center', alignItems: 'center',
+    marginBottom: 12,
+    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 15, elevation: 4,
+    borderWidth: 1, borderColor: 'rgba(0,0,0,0.02)',
   },
-  logoEmoji: { fontSize: 38 },
-
-  appName: { fontSize: 44, fontWeight: '900', color: '#111827', letterSpacing: -1.5, marginBottom: 4 },
-  tagline: { fontSize: 15, fontWeight: '600', color: '#6B7280', marginBottom: 20, letterSpacing: 0.3 },
-
-  pillsRow: { flexDirection: 'row', gap: 8, marginBottom: 28 },
-  pill: {
-    backgroundColor: '#F1F3F5', borderRadius: 20,
-    paddingHorizontal: 14, paddingVertical: 6,
-    borderWidth: 1, borderColor: '#E5E7EB',
-  },
-  pillAccent: { backgroundColor: '#6366F1', borderColor: '#6366F1' },
-  pillText: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
-  pillTextAccent: { color: '#FFF' },
-
-  featureCards: {
-    backgroundColor: '#FFF', borderRadius: 20, padding: 20,
-    marginBottom: 24, borderWidth: 1, borderColor: '#F1F3F5',
-    shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10, elevation: 2,
-  },
-  featureRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  featureIconBox: {
-    width: 44, height: 44, borderRadius: 14,
-    backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center', marginRight: 14,
-  },
-  featureEmoji: { fontSize: 22 },
-  featureTitle: { fontSize: 14, fontWeight: '800', color: '#111827', marginBottom: 2 },
-  featureDesc: { fontSize: 12, color: '#9CA3AF', fontWeight: '500' },
-
-  consentRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 24 },
-  checkbox: { width: 22, height: 22, borderRadius: 6, marginRight: 12, marginTop: 2 },
-  consentText: { flex: 1, fontSize: 13, color: '#6B7280', lineHeight: 20, fontWeight: '500' },
-  consentLink: { color: '#6366F1', fontWeight: '800' },
-
-  ctaBtn: {
-    height: 62, borderRadius: 18,
-    backgroundColor: '#111827',
-    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
-    shadowColor: '#111827', shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2, shadowRadius: 16, elevation: 8,
-  },
-  ctaBtnDisabled: { backgroundColor: '#E5E7EB', shadowOpacity: 0, elevation: 0 },
-  ctaBtnText: { color: '#FFF', fontSize: 17, fontWeight: '900', marginRight: 8 },
-  ctaBtnArrow: { color: '#FFF', fontSize: 22, fontWeight: '900' },
-
-  footer: { paddingBottom: 20, alignItems: 'center' },
-  footerText: { fontSize: 10, color: '#D1D5DB', fontWeight: '700', letterSpacing: 2 },
-
-  form: { marginBottom: 20 },
-  inputContainer: { marginBottom: 16 },
-  inputLabel: { fontSize: 10, fontWeight: '900', color: '#6B7280', letterSpacing: 1, marginBottom: 8, marginLeft: 4 },
+  logoEmoji: { fontSize: 24, color: '#6366F1' },
+  appName: { fontSize: 28, fontWeight: '900', color: '#1E293B', letterSpacing: -1, marginBottom: 2 },
+  tagline: { fontSize: 13, fontWeight: '500', color: '#64748B', marginBottom: 16, lineHeight: 18 },
+  form: { gap: 12 },
+  inputContainer: { gap: 4 },
+  inputLabel: { fontSize: 9, fontWeight: '900', color: '#94A3B8', letterSpacing: 1, marginLeft: 6 },
   input: {
-    backgroundColor: '#FFF',
-    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111827',
-    borderWidth: 1.5,
-    borderColor: '#F1F3F5',
+    paddingVertical: 10,
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
-  toggleBtn: { marginTop: 20, alignItems: 'center' },
-  toggleText: { fontSize: 13, color: '#6366F1', fontWeight: '700' },
+  consentRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12, marginBottom: 4 },
+  checkbox: { 
+    width: 18, height: 18, borderRadius: 5, 
+    borderWidth: 2, borderColor: '#E2E8F0', 
+    justifyContent: 'center', alignItems: 'center', marginRight: 10,
+    backgroundColor: '#FFF'
+  },
+  checkboxActive: { backgroundColor: '#6366F1', borderColor: '#6366F1' },
+  consentText: { fontSize: 13, color: '#64748B', fontWeight: '500' },
+  ctaBtn: {
+    height: 48, borderRadius: 12,
+    justifyContent: 'center', alignItems: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.1, shadowRadius: 20, elevation: 8,
+  },
+  ctaBtnDisabled: { opacity: 0.3 },
+  ctaBtnText: { color: '#FFF', fontSize: 16, fontWeight: '800', marginRight: 6 },
+  ctaBtnArrow: { color: '#FFF', fontSize: 18, fontWeight: '800' },
+  toggleArea: { marginTop: 16, alignItems: 'center', gap: 6, borderTopWidth: 1, borderTopColor: '#F1F5F9', paddingTop: 12, borderStyle: 'dotted' },
+  toggleDesc: { color: '#94A3B8', fontSize: 15 },
+  toggleBtn: {},
+  toggleText: { fontSize: 16, color: '#6366F1', fontWeight: '800' },
+  footer: { marginTop: 32, paddingBottom: 20, alignItems: 'center' },
+  footerText: { fontSize: 11, color: '#94A3B8', fontWeight: '700', letterSpacing: 4, opacity: 0.6 },
 });

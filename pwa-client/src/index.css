@@ -18,13 +18,14 @@ html, body, #root {
   width: 100%;
   margin: 0;
   padding: 0;
-  overflow: hidden; /* Prevent the whole page from bouncing/scrolling */
+  overflow-y: auto; /* Allow scrolling */
+  overflow-x: hidden;
 }
 
 body {
   font-family: 'Outfit', sans-serif;
-  background-color: #0F172A;
-  color: #FFF;
+  background-color: #FDFBF7; /* Match creamy theme */
+  color: #1E293B;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

@@ -29,7 +29,7 @@ const LoginScreen = ({ onLoginSuccess, initialMode = 'signup' }) => {
       showAlert('Required', 'Please enter both an anonymous name and a password.', 'info');
       return;
     }
-    if (!isLogin && !agreed) {
+    if (!agreed) {
       showAlert('Required', 'Please accept the community guidelines to continue.', 'info');
       return;
     }
@@ -57,154 +57,245 @@ const LoginScreen = ({ onLoginSuccess, initialMode = 'signup' }) => {
 
   const styles = {
     container: {
-      minHeight: '100dvh', // Modern dynamic viewport height
-      backgroundColor: '#0F172A',
+      minHeight: '100dvh',
+      backgroundColor: '#FDFBF7',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
-      justifyContent: 'center',
       position: 'relative',
-      overflowY: 'auto', // Allow scrolling for long forms
-      padding: '40px 24px', // More vertical padding
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      padding: '40px 24px',
       fontFamily: '"Outfit", sans-serif',
       WebkitOverflowScrolling: 'touch',
     },
-    orb: {
+    orb1: {
       position: 'absolute',
-      borderRadius: '50%',
-      filter: 'blur(80px)',
+      top: '-15%',
+      right: '-10%',
+      width: '800px',
+      height: '800px',
+      background: 'radial-gradient(circle, rgba(99, 102, 241, 0.05) 0%, transparent 70%)',
+      filter: 'blur(100px)',
+      zIndex: 0,
+    },
+    orb2: {
+      position: 'absolute',
+      bottom: '-15%',
+      left: '-10%',
+      width: '800px',
+      height: '800px',
+      background: 'radial-gradient(circle, rgba(217, 119, 6, 0.04) 0%, transparent 70%)',
+      filter: 'blur(100px)',
+      zIndex: 0,
+    },
+    pattern: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%236366F1' fill-opacity='0.02'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
       zIndex: 0,
     },
     card: {
-      backgroundColor: 'rgba(255, 255, 255, 0.03)',
-      backdropFilter: 'blur(40px)',
-      borderRadius: '40px',
-      padding: '48px',
+      backgroundColor: '#FFFFFF',
+      borderRadius: '32px',
+      padding: '24px 28px',
       width: '100%',
-      maxWidth: '480px',
-      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+      maxWidth: '440px',
+      boxShadow: '0 40px 100px -20px rgba(0, 0, 0, 0.04), inset 0 0 0 1px rgba(0, 0, 0, 0.03)',
       zIndex: 1,
-      border: '1px solid rgba(255, 255, 255, 0.1)',
       display: 'flex',
       flexDirection: 'column',
-      gap: '8px'
+      gap: '8px',
+      position: 'relative',
+      margin: '10px 0',
     },
     betaBadge: {
-      backgroundColor: isLogin ? '#10B98122' : '#6366F122',
-      display: 'inline-block',
+      display: 'inline-flex',
+      alignItems: 'center',
       alignSelf: 'flex-start',
-      borderRadius: '12px',
-      padding: '8px 16px',
-      marginBottom: '16px',
-      fontSize: '11px',
+      backgroundColor: 'rgba(99, 102, 241, 0.08)',
+      borderRadius: '100px',
+      padding: '6px 14px',
+      marginBottom: '8px',
+      fontSize: '10px',
       fontWeight: '800',
-      color: isLogin ? '#10B981' : '#818CF8',
+      color: '#6366F1',
       letterSpacing: '1px',
       textTransform: 'uppercase',
-      border: `1px solid ${isLogin ? '#10B98144' : '#6366F144'}`,
+      border: '1px solid rgba(99, 102, 241, 0.1)',
     },
-    logoWrap: {
-      width: '72px', height: '72px', borderRadius: '22px',
-      background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
-      display: 'flex', justifyContent: 'center', alignItems: 'center',
-      marginBottom: '16px', border: '1px solid rgba(255,255,255,0.1)',
-      fontSize: '32px',
-      boxShadow: '0 8px 16px rgba(0,0,0,0.2)'
+    logoGlow: {
+      width: '56px',
+      height: '56px',
+      borderRadius: '20px',
+      background: 'white',
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: '12px',
+      fontSize: '28px',
+      boxShadow: '0 10px 30px rgba(0, 0, 0, 0.04), inset 0 0 0 1px rgba(0, 0, 0, 0.02)',
+      color: '#6366F1'
     },
-    appName: { fontSize: '42px', fontWeight: '900', color: '#FFF', letterSpacing: '-1px', margin: 0 },
-    tagline: { fontSize: '15px', fontWeight: '500', color: '#94A3B8', marginBottom: '32px', lineHeight: '1.6' },
-    form: { display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '16px' },
-    inputGroup: { display: 'flex', flexDirection: 'column', gap: '8px' },
-    label: { fontSize: '11px', fontWeight: '800', color: '#6366F1', letterSpacing: '0.5px', marginLeft: '4px', textTransform: 'uppercase' },
+    appName: {
+      fontSize: '28px',
+      fontWeight: '900',
+      color: '#1E293B',
+      letterSpacing: '-1px',
+      margin: 0,
+      lineHeight: '1'
+    },
+    tagline: {
+      fontSize: '14px',
+      fontWeight: '500',
+      color: '#64748B',
+      marginBottom: '16px',
+      lineHeight: '1.4',
+      maxWidth: '280px'
+    },
+    form: { display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '0' },
+    inputGroup: { display: 'flex', flexDirection: 'column', gap: '6px' },
+    label: {
+      fontSize: '9px',
+      fontWeight: '800',
+      color: '#94A3B8',
+      letterSpacing: '1px',
+      marginLeft: '4px',
+      textTransform: 'uppercase',
+    },
     input: {
-      backgroundColor: 'rgba(255, 255, 255, 0.05)',
-      borderRadius: '16px',
-      padding: '16px 20px',
-      fontSize: '15px',
-      fontWeight: '600',
-      color: '#FFF',
-      border: '1px solid rgba(255, 255, 255, 0.1)',
+      backgroundColor: '#F8FAFC',
+      borderRadius: '14px',
+      padding: '12px 16px',
+      fontSize: '14px',
+      fontWeight: '500',
+      color: '#1E293B',
+      border: '1px solid #E2E8F0',
       outline: 'none',
+      transition: 'all 0.4s cubic-bezier(0.23, 1, 0.32, 1)',
+    },
+    inputFocus: {
+      borderColor: '#6366F1',
+      backgroundColor: '#FFFFFF',
+      boxShadow: '0 0 0 5px rgba(99, 102, 241, 0.04)'
+    },
+    checkboxContainer: { display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px', cursor: 'pointer' },
+    checkbox: {
+      width: '20px',
+      height: '20px',
+      borderRadius: '6px',
+      border: '2px solid #E2E8F0',
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
       transition: 'all 0.3s ease',
+      backgroundColor: 'white'
     },
-    inputFocus: { borderColor: '#6366F1', backgroundColor: 'rgba(99, 102, 241, 0.05)' },
-    
-    checkboxContainer: { display: 'flex', alignItems: 'start', gap: '12px', marginTop: '12px', marginBottom: '8px', cursor: 'pointer' },
-    checkbox: { width: '22px', height: '22px', borderRadius: '8px', border: '2px solid rgba(255,255,255,0.2)', display: 'flex', justifyContent: 'center', alignItems: 'center', transition: 'all 0.2s' },
-    checkboxActive: { backgroundColor: '#6366F1', borderColor: '#6366F1' },
-    checkboxText: { flex: 1, fontSize: '13px', color: '#94A3B8', lineHeight: '1.5', fontWeight: '500' },
-    
+    checkboxActive: {
+      background: '#6366F1',
+      borderColor: '#6366F1'
+    },
+    checkboxText: { flex: 1, fontSize: '13px', color: '#64748B', fontWeight: '500' },
     ctaBtn: {
-      height: '64px', borderRadius: '20px',
-      background: isLogin ? 'linear-gradient(135deg, #10B981 0%, #059669 100%)' : 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
-      color: '#FFF', fontSize: '17px', fontWeight: '900',
-      display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px',
-      border: 'none', cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-      boxShadow: '0 10px 20px -5px rgba(0, 0, 0, 0.3)',
-      marginTop: '12px'
+      height: '48px',
+      borderRadius: '14px',
+      background: isLogin ? '#1E293B' : 'linear-gradient(135deg, #6366F1, #4F46E5)',
+      color: '#FFF',
+      fontSize: '16px',
+      fontWeight: '800',
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: '8px',
+      border: 'none',
+      cursor: 'pointer',
+      transition: 'all 0.4s cubic-bezier(0.23, 1, 0.32, 1)',
+      boxShadow: isLogin ? '0 15px 30px -10px rgba(30, 41, 59, 0.2)' : '0 15px 30px -10px rgba(99, 102, 241, 0.2)',
+      marginTop: '10px'
     },
-    ctaBtnDisabled: { opacity: 0.5, cursor: 'not-allowed', filter: 'grayscale(0.5)' },
-    toggleBtn: { 
-      backgroundColor: 'rgba(255, 255, 255, 0.05)', 
-      border: '1px solid rgba(255, 255, 255, 0.1)', 
-      borderRadius: '16px',
-      padding: '12px 24px',
-      color: '#94A3B8', 
-      fontWeight: '600', 
-      fontSize: '14px', 
-      cursor: 'pointer', 
-      marginTop: '24px', 
+    ctaBtnDisabled: { opacity: 0.4, cursor: 'not-allowed' },
+    toggleArea: {
+      marginTop: '16px',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: '6px',
+      paddingTop: '12px',
+      borderTop: '1px dashed #E2E8F0'
+    },
+    toggleText: { color: '#94A3B8', fontSize: '13px', fontWeight: '500' },
+    toggleBtn: {
+      background: 'none',
+      border: 'none',
+      padding: '2px 6px',
+      color: '#6366F1',
+      fontWeight: '800',
+      fontSize: '14px',
+      cursor: 'pointer',
+      transition: 'all 0.2s',
+    },
+    footer: {
+      position: 'relative',
+      marginTop: '32px',
+      paddingBottom: '24px',
+      fontSize: '12px',
+      color: '#64748B',
+      fontWeight: '700',
+      letterSpacing: '4px',
       textAlign: 'center',
       width: '100%',
-      transition: 'all 0.2s'
-    },
-    footer: { position: 'relative', marginTop: '48px', marginBottom: '24px', fontSize: '11px', color: '#475569', fontWeight: '700', letterSpacing: '2px', textAlign: 'center', width: '100%', pointerEvents: 'none' }
+      pointerEvents: 'none',
+      textTransform: 'uppercase',
+      opacity: 0.5
+    }
   };
 
   return (
     <div style={styles.container}>
-      {/* Dynamic Background Elements */}
-      <motion.div 
-        animate={{ 
-          x: [0, 50, 0], 
-          y: [0, 80, 0],
-          scale: [1, 1.2, 1] 
-        }} 
-        transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
-        style={{ ...styles.orb, top: '-100px', right: '-100px', width: '400px', height: '400px', backgroundColor: '#6366F122' }} 
-      />
-      <motion.div 
-        animate={{ 
-          x: [0, -40, 0], 
-          y: [0, -60, 0],
-          scale: [1, 1.1, 1] 
-        }} 
-        transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
-        style={{ ...styles.orb, bottom: '-150px', left: '-100px', width: '500px', height: '500px', backgroundColor: '#10B98111' }} 
-      />
+      <div style={styles.orb1} />
+      <div style={styles.orb2} />
+      <div style={styles.pattern} />
 
       <motion.div 
-        initial={{ opacity: 0, scale: 0.9, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: "backOut" }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.6 }}
         style={styles.card}
       >
-        <div style={styles.betaBadge}>{isLogin ? '✦ AUTHENTICATE' : '✦ INITIALIZE IDENTITY'}</div>
+        <div style={styles.betaBadge}>
+          <span style={{ marginRight: '8px' }}>✧</span>
+          {isLogin ? 'Access Authorized' : 'Security Clearance'}
+        </div>
         
-        <div style={styles.logoWrap}>{isLogin ? '🔑' : '🚀'}</div>
-        <h1 style={styles.appName}>{isLogin ? 'Welcome Back' : 'Get Started'}</h1>
-        <p style={styles.tagline}>{isLogin ? 'Access your encrypted campus hub.' : 'Create an anonymous identity on the hub.'}</p>
+        <motion.div 
+          key={isLogin ? 'login-icon' : 'signup-icon'}
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          style={styles.logoGlow}
+        >
+          {isLogin ? '❈' : '✦'}
+        </motion.div>
+
+        <h1 style={styles.appName}>{isLogin ? 'Welcome home.' : 'Start fresh.'}</h1>
+        <p style={styles.tagline}>{isLogin ? 'Return to your secure campus hub.' : 'Create your anonymous digital footprint.'}</p>
 
         <form onSubmit={handleAuthAction} style={styles.form}>
           <div style={styles.inputGroup}>
-            <label style={styles.label}>ANONYMOUS NAME</label>
+            <label style={styles.label}>Identity</label>
             <input 
               style={styles.input}
-              placeholder="e.g. ShadowStudent"
+              placeholder="e.g. shadow_student"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               onFocus={(e) => Object.assign(e.target.style, styles.inputFocus)}
-              onBlur={(e) => e.target.style.borderColor = 'rgba(255, 255, 255, 0.1)'}
+              onBlur={(e) => {
+                e.target.style.borderColor = '#E2E8F0';
+                e.target.style.background = '#F8FAFC';
+                e.target.style.boxShadow = 'none';
+              }}
               autoCapitalize="none"
               required
             />
@@ -216,65 +307,81 @@ const LoginScreen = ({ onLoginSuccess, initialMode = 'signup' }) => {
               animate={{ opacity: 1, height: 'auto' }}
               style={styles.inputGroup}
             >
-              <label style={styles.label}>REAL NAME (OPTIONAL)</label>
+              <label style={styles.label}>Full Name (Optional)</label>
               <input 
                 style={styles.input}
-                placeholder="e.g. Alex Johnson"
+                placeholder="Name for your profile"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
+                onFocus={(e) => Object.assign(e.target.style, styles.inputFocus)}
+                onBlur={(e) => {
+                  e.target.style.borderColor = '#E2E8F0';
+                  e.target.style.background = '#F8FAFC';
+                  e.target.style.boxShadow = 'none';
+                }}
               />
             </motion.div>
           )}
 
           <div style={styles.inputGroup}>
-            <label style={styles.label}>PASSWORD</label>
+            <label style={styles.label}>Access Key</label>
             <input 
               style={styles.input}
               type="password"
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              onFocus={(e) => Object.assign(e.target.style, styles.inputFocus)}
+              onBlur={(e) => {
+                e.target.style.borderColor = '#E2E8F0';
+                e.target.style.background = '#F8FAFC';
+                e.target.style.boxShadow = 'none';
+              }}
               required
             />
           </div>
 
-          {!isLogin && (
-            <div style={styles.checkboxContainer} onClick={() => setAgreed(!agreed)}>
-              <div style={{ ...styles.checkbox, ...(agreed ? styles.checkboxActive : {}) }}>
-                {agreed && <span style={{ color: '#FFF', fontSize: '14px' }}>✓</span>}
-              </div>
-              <span style={styles.checkboxText}>
-                I accept the <b style={{ color: '#FFF' }}>Community Guidelines</b> and promise to be respectful.
-              </span>
+          <div style={styles.checkboxContainer} onClick={() => setAgreed(!agreed)}>
+            <div style={{ ...styles.checkbox, ...(agreed ? styles.checkboxActive : {}) }}>
+              {agreed && <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} style={{ color: '#FFF', fontSize: '14px' }}>✓</motion.span>}
             </div>
-          )}
+            <span style={styles.checkboxText}>Agree to <b style={{ color: '#1E293B' }}>Campus Protocol</b></span>
+          </div>
 
           <motion.button 
-            whileHover={{ scale: 1.02, y: -2 }}
+            whileHover={{ y: -4 }}
             whileTap={{ scale: 0.98 }}
             type="submit"
-            style={{ ...styles.ctaBtn, ...(((!isLogin && (!agreed || !username || !password)) || (isLogin && (!username || !password))) ? styles.ctaBtnDisabled : {}) }}
-            disabled={loading || (!isLogin && !agreed)}
+            style={{ 
+              ...styles.ctaBtn, 
+              ...((!agreed || !username || !password) ? styles.ctaBtnDisabled : {}) 
+            }}
+            disabled={loading || !agreed}
           >
-            {loading ? 'Encrypting...' : (
+            {loading ? 'Processing...' : (
               <>
-                {isLogin ? 'Login Securely' : 'Initialize Account'}
-                <span style={{ fontSize: '18px' }}>→</span>
+                {isLogin ? 'Enter Hub' : 'Initialize Identity'}
+                <span style={{ fontSize: '20px', marginLeft: '4px' }}>→</span>
               </>
             )}
           </motion.button>
         </form>
 
-        <button style={styles.toggleBtn} onClick={() => setIsLogin(!isLogin)}>
-          {isLogin ? (
-            <span>New student? <b style={{ color: '#6366F1' }}>Initialize identity</b></span>
-          ) : (
-            <span>Already registered? <b style={{ color: '#10B981' }}>Secure login</b></span>
-          )}
-        </button>
+        <div style={styles.toggleArea}>
+          <span style={styles.toggleText}>{isLogin ? "New here?" : "Already part of the hub?"}</span>
+          <button style={styles.toggleBtn} onClick={() => {
+            setIsLogin(!isLogin);
+            setUsername('');
+            setPassword('');
+            setFullName('');
+            setAgreed(false);
+          }}>
+            {isLogin ? 'Create security clearance' : 'Access your identity'}
+          </button>
+        </div>
       </motion.div>
 
-      <div style={styles.footer}>E2E ENCRYPTED • ANONYMOUS • DECENTRALIZED IDENTITY</div>
+      <div style={styles.footer}>Private • Secure • Unfiltered</div>
 
       <CustomAlert 
         visible={alert.visible}
