@@ -45,7 +45,7 @@ const LoginScreen = ({ onLoginSuccess, initialMode = 'signup' }) => {
       });
 
       if (response.data.user) {
-        onLoginSuccess(response.data.user, isLogin, response.data.maskId);
+        onLoginSuccess(response.data.user, isLogin, response.data.maskId, response.data.profile);
       }
     } catch (error) {
       const msg = error.response?.data?.error || error.message;
@@ -101,7 +101,7 @@ const LoginScreen = ({ onLoginSuccess, initialMode = 'signup' }) => {
     card: {
       backgroundColor: '#FFFFFF',
       borderRadius: '32px',
-      padding: '24px 28px',
+      padding: '20px 24px',
       width: '100%',
       maxWidth: '440px',
       boxShadow: '0 40px 100px -20px rgba(0, 0, 0, 0.04), inset 0 0 0 1px rgba(0, 0, 0, 0.03)',
@@ -141,6 +141,7 @@ const LoginScreen = ({ onLoginSuccess, initialMode = 'signup' }) => {
       color: '#6366F1'
     },
     appName: {
+      fontFamily: "'Outfit', 'Inter', sans-serif",
       fontSize: '28px',
       fontWeight: '900',
       color: '#1E293B',
@@ -156,7 +157,7 @@ const LoginScreen = ({ onLoginSuccess, initialMode = 'signup' }) => {
       lineHeight: '1.4',
       maxWidth: '280px'
     },
-    form: { display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '0' },
+    form: { display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '0' },
     inputGroup: { display: 'flex', flexDirection: 'column', gap: '6px' },
     label: {
       fontSize: '9px',
@@ -218,12 +219,12 @@ const LoginScreen = ({ onLoginSuccess, initialMode = 'signup' }) => {
     },
     ctaBtnDisabled: { opacity: 0.4, cursor: 'not-allowed' },
     toggleArea: {
-      marginTop: '16px',
+      marginTop: '12px',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
-      gap: '6px',
-      paddingTop: '12px',
+      gap: '4px',
+      paddingTop: '8px',
       borderTop: '1px dashed #E2E8F0'
     },
     toggleText: { color: '#94A3B8', fontSize: '13px', fontWeight: '500' },

@@ -494,15 +494,15 @@ const CAT_COLORS = ['#F5F3FF', '#ECFEFF', '#FEFCE8', '#FFF1F2', '#F0F9FF', '#ECF
 const CLASS_COLORS = ['#EEF2FF', '#FDF4FF', '#F0FDF4', '#FFFBEB', '#F0F9FF', '#FEF2F2'];
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8F9FA' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8F9FA' },
-  loadingText: { marginTop: 12, fontSize: 14, color: '#9CA3AF', fontWeight: '600' },
+  container: { flex: 1, backgroundColor: '#FDFBF7' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FDFBF7' },
+  loadingText: { marginTop: 12, fontSize: 14, color: '#64748B', fontWeight: '600' },
 
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 56, paddingHorizontal: 22, paddingBottom: 16, backgroundColor: '#FFF', borderBottomWidth: 1, borderColor: '#F1F3F5' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 56, paddingHorizontal: 22, paddingBottom: 16, backgroundColor: '#FFF', borderBottomWidth: 1, borderColor: '#F1F5F9' },
   backText: { fontSize: 14, color: '#6366F1', fontWeight: '800' },
-  headerTitle: { fontSize: 18, fontWeight: '900', color: '#111827' },
+  headerTitle: { fontSize: 18, fontWeight: '900', color: '#1E293B' },
 
-  identityBanner: { backgroundColor: '#6366F1', margin: 20, borderRadius: 24, padding: 26, alignItems: 'center', shadowColor: '#6366F1', shadowOpacity: 0.3, shadowRadius: 16, elevation: 8 },
+  identityBanner: { backgroundColor: '#6366F1', margin: 20, borderRadius: 24, padding: 26, alignItems: 'center', shadowColor: '#6366F1', shadowOpacity: 0.25, shadowRadius: 16, elevation: 12 },
   avatarCircle: { width: 66, height: 66, borderRadius: 33, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
   avatarEmoji: { fontSize: 32 },
   identityName: { fontSize: 24, fontWeight: '900', color: '#FFF', marginBottom: 2, letterSpacing: -0.5 },
@@ -512,19 +512,19 @@ const styles = StyleSheet.create({
   maskIdValue: { fontSize: 11, fontWeight: '700', color: '#FFF' },
   identityHint: { fontSize: 11, color: 'rgba(255,255,255,0.7)', fontWeight: '600' },
 
-  activeCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FFF', marginHorizontal: 20, marginBottom: 16, padding: 18, borderRadius: 18, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, elevation: 2, borderWidth: 1, borderColor: '#F1F3F5' },
+  activeCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FFF', marginHorizontal: 20, marginBottom: 16, padding: 18, borderRadius: 18, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, elevation: 2, borderWidth: 1, borderColor: '#F1F5F9' },
   activeLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  activeIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: '#F8F9FA', justifyContent: 'center', alignItems: 'center', marginRight: 14, borderWidth: 1, borderColor: '#E5E7EB' },
+  activeIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center', marginRight: 14, borderWidth: 1, borderColor: '#E5E7EB' },
   activeEmoji: { fontSize: 20 },
-  activeLabel: { fontSize: 10, fontWeight: '900', color: '#9CA3AF', letterSpacing: 1, marginBottom: 2 },
-  activeName: { fontSize: 15, fontWeight: '800', color: '#111827' },
+  activeLabel: { fontSize: 10, fontWeight: '900', color: '#94A3B8', letterSpacing: 1, marginBottom: 2 },
+  activeName: { fontSize: 15, fontWeight: '800', color: '#1E293B' },
   changeBtn: { backgroundColor: '#EEF2FF', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
   changeBtnText: { color: '#6366F1', fontSize: 12, fontWeight: '800' },
 
   section: { paddingHorizontal: 20, paddingBottom: 16 },
-  sectionLabel: { fontSize: 11, fontWeight: '900', color: '#9CA3AF', letterSpacing: 1.5, marginBottom: 12 },
-  input: { backgroundColor: '#FFF', borderRadius: 16, paddingHorizontal: 18, paddingVertical: 18, fontSize: 16, fontWeight: '700', color: '#111827', shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 6, elevation: 2, borderWidth: 1, borderColor: '#F1F3F5', marginBottom: 8 },
-  hint: { fontSize: 12, color: '#9CA3AF', fontWeight: '500', marginLeft: 4 },
+  sectionLabel: { fontSize: 11, fontWeight: '900', color: '#94A3B8', letterSpacing: 1.5, marginBottom: 12 },
+  input: { backgroundColor: '#FFF', borderRadius: 16, paddingHorizontal: 18, paddingVertical: 18, fontSize: 16, fontWeight: '700', color: '#1E293B', shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 6, elevation: 2, borderWidth: 1, borderColor: '#F1F5F9', marginBottom: 8 },
+  hint: { fontSize: 12, color: '#94A3B8', fontWeight: '500', marginLeft: 4 },
 
   saveBtn: { backgroundColor: '#6366F1', borderRadius: 16, paddingVertical: 18, alignItems: 'center', marginBottom: 16, shadowColor: '#6366F1', shadowOpacity: 0.3, shadowRadius: 10, elevation: 4 },
   saveBtnText: { color: '#FFF', fontSize: 15, fontWeight: '900', letterSpacing: 0.5 },
@@ -532,27 +532,33 @@ const styles = StyleSheet.create({
   logoutText: { color: '#EF4444', fontSize: 15, fontWeight: '800' },
 
   // Flow Pages
-  page: { flex: 1, paddingHorizontal: 22, paddingTop: 56, paddingBottom: 24, backgroundColor: '#FAFAFA' },
+  page: { flex: 1, paddingHorizontal: 22, paddingTop: 56, paddingBottom: 24, backgroundColor: '#FDFBF7' },
   backBtn: { marginBottom: 20 },
   backBtnText: { fontSize: 15, color: '#6366F1', fontWeight: '800' },
-  stepHeading: { fontSize: 26, fontWeight: '900', color: '#111827', marginBottom: 6 },
-  stepSub: { fontSize: 15, color: '#6B7280', fontWeight: '500', marginBottom: 20 },
+  stepHeading: { fontSize: 26, fontWeight: '900', color: '#1E293B', marginBottom: 6 },
+  stepSub: { fontSize: 15, color: '#64748B', fontWeight: '500', marginBottom: 20 },
 
-  optionCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 16, padding: 14, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 6, elevation: 1, borderWidth: 1.5, borderColor: 'transparent' },
+  optionCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 16, padding: 14, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 6, elevation: 1, borderWidth: 1.5, borderColor: '#F1F5F9' },
   optionCardSelected: { borderColor: '#6366F1', backgroundColor: '#EEF2FF' },
   optionIconBox: { width: 44, height: 44, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginRight: 14 },
   optionEmoji: { fontSize: 22 },
-  optionName: { fontSize: 15, fontWeight: '800', color: '#111827' },
-  chevronBox: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#F3F4F6', justifyContent: 'center', alignItems: 'center' },
-  chevron: { color: '#9CA3AF', fontSize: 18, fontWeight: '600' },
+  optionName: { fontSize: 15, fontWeight: '800', color: '#1E293B' },
+  chevronBox: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center' },
+  chevron: { color: '#94A3B8', fontSize: 18, fontWeight: '600' },
   checkBox: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#6366F1', justifyContent: 'center', alignItems: 'center' },
   checkMark: { color: '#FFF', fontSize: 14, fontWeight: '900' },
 
   finishBtn: { backgroundColor: '#6366F1', borderRadius: 18, paddingVertical: 18, alignItems: 'center', marginTop: 20, shadowColor: '#6366F1', shadowOpacity: 0.3, shadowRadius: 12, elevation: 5 },
   finishBtnText: { color: '#FFF', fontSize: 16, fontWeight: '900' },
 
-  headerActionBtn: { padding: 8, borderRadius: 12, backgroundColor: '#F3F4F6' },
-  headerActionText: { fontSize: 16, color: '#111827', fontWeight: '800' },
-  deleteAccountBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: '#FEE2E2' },
+  headerActionBtn: { padding: 8, borderRadius: 12, backgroundColor: '#F8FAFC' },
+  headerActionText: { fontSize: 16, color: '#1E293B', fontWeight: '800' },
+  deleteAccountBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: '#FEF2F2' },
   deleteAccountText: { color: '#EF4444', fontSize: 13, fontWeight: '900' },
+  
+  // New Card & Input Styles
+  inputCard: { backgroundColor: '#FFF', borderRadius: 24, padding: 24, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 15, elevation: 5, marginBottom: 24, borderWidth: 1, borderColor: '#F1F5F9' },
+  fieldLabel: { fontSize: 10, fontWeight: '900', color: '#94A3B8', letterSpacing: 1.5, marginBottom: 10 },
+  profileInput: { fontSize: 16, fontWeight: '700', color: '#1E293B', paddingVertical: 12 },
+  divider: { height: 1, backgroundColor: '#F1F5F9', marginVertical: 16 }
 });

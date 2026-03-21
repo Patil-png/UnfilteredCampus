@@ -11,8 +11,8 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors({
-  origin: ['https://incog.sbs', 'https://www.incog.sbs', 'http://localhost:5173'],
-  credentials: true,
+  origin: '*', // TODO: Restore origin whitelist before production
+  credentials: false, // Must be false with wildcard origin
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -205,7 +205,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     console.log(`   - Ghost ID: ${maskId}`);
     console.log(`   - Primary Class: ${currentChat}\n`);
 
-    res.json({ user, maskId });
+    res.json({ user, maskId, profile });
   } catch (err) {
     console.error('[AUTH] Login error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -653,15 +653,20 @@ app.post('/api/profiles/select-group', async (req, res) => {
 
   try {
     const maskId = generateAnonymousId(userId);
+    const updateData = {
+      selected_channel_id: channelId,
+      last_seen: new Date().toISOString()
+    };
+    
+    // Only update context if provided (don't clear it for private groups)
+    if (collegeId) updateData.selected_college_id = collegeId;
+    if (categoryId) updateData.selected_category_id = categoryId;
+
     await supabaseAdmin
       .from('profiles')
-      .update({
-        selected_college_id: collegeId,
-        selected_category_id: categoryId,
-        selected_channel_id: channelId,
-        last_seen: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('mask_id', maskId);
+
 
     console.log(`[👤 PROFILE] Group Selected: User ${userId} -> Channel ${channelId}`);
     res.json({ success: true });

@@ -641,7 +641,7 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
   ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   return (
-    <LinearGradient colors={['#0F0B1E', '#07050F']} style={styles.container}>
+    <LinearGradient colors={['#FDFBF7', '#FFFFFF']} style={styles.container}>
       <StatusBar barStyle="light-content" />
 
       <View style={styles.header}>
@@ -664,8 +664,8 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
           </View>
         ) : (
           <View style={styles.headerTop}>
-            <TouchableOpacity onPress={() => onBack()} style={styles.backBtn}>
-              <Text style={styles.headerBackIcon}>←</Text>
+            <TouchableOpacity onPress={() => onBack()} style={styles.sidebarToggleBtn}>
+              <Text style={styles.sidebarToggleIcon}>☰</Text>
             </TouchableOpacity>
             <View style={styles.headerAvatar}>
               <Text style={styles.avatarEmoji}>{channel?.emoji || '🏫'}</Text>
@@ -921,7 +921,7 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
                               <View style={styles.bubbleContainer}>
                                 {isMe ? (
                                   <LinearGradient
-                                    colors={['#4C3BFF', '#7366FF']}
+                                    colors={['#6366F1', '#4F46E5']}
                                     start={{ x: 0, y: 1 }} end={{ x: 1, y: 0 }}
                                     style={[styles.bubble, styles.selfBubble, !isFirstInGroup && { borderTopRightRadius: 20 }]}
                                   >
@@ -1300,15 +1300,15 @@ export default function ChatScreen({ user, channel: propChannel, onOpenProfile, 
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0F0C29' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FDFBF7' },
 
-  // Header Styles (Premium Translucent)
+  // Header Styles (Premium Light)
   header: {
-    backgroundColor: 'rgba(7, 5, 15, 0.9)',
+    backgroundColor: '#FFFFFF',
     paddingTop: Platform.OS === 'ios' ? 60 : 40,
     paddingBottom: 15,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+    borderBottomColor: '#F1F5F9',
   },
   headerTop: {
     flexDirection: 'row',
@@ -1318,15 +1318,20 @@ const styles = StyleSheet.create({
   backBtn: {
     marginRight: 15,
   },
-  headerBackIcon: {
-    fontSize: 24,
-    color: '#FFF',
+  sidebarToggleBtn: {
+    width: 40, height: 40, borderRadius: 12,
+    backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center',
+    marginRight: 10, borderWidth: 1, borderColor: '#E2E8F0',
+  },
+  sidebarToggleIcon: { fontSize: 18, color: '#1E293B', fontWeight: '900' },
+  headerBackIcon: { fontSize: 24,
+    color: '#1E293B',
   },
   headerAvatar: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -1340,7 +1345,7 @@ const styles = StyleSheet.create({
   headerTitleText: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#FFF',
+    color: '#1E293B',
     letterSpacing: 0.5,
   },
   headerSubtitleText: {
@@ -1359,21 +1364,21 @@ const styles = StyleSheet.create({
   },
   actionIcon: {
     fontSize: 22,
-    color: '#FFF',
+    color: '#1E293B',
   },
 
   headerBottomFixed: {
     paddingHorizontal: 12,
     paddingVertical: 5,
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    backgroundColor: '#EEF2FF',
     marginTop: 10,
     borderRadius: 8,
     alignSelf: 'flex-start',
     marginLeft: 48,
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.2)',
+    borderColor: '#E0E7FF',
   },
-  maskBadgeText: { color: 'rgba(255, 255, 255, 0.7)', fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
+  maskBadgeText: { color: '#64748B', fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
 
   // Date Header (Sleek Pill)
   dateHeader: {
@@ -1461,20 +1466,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 22,
-    elevation: 1,
+    elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
   },
   selfBubble: {
     borderBottomRightRadius: 4,
   },
   nodeBubble: {
-    backgroundColor: 'rgba(30, 30, 50, 0.4)',
+    backgroundColor: '#FFFFFF',
     borderBottomLeftRadius: 4,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: '#F1F5F9',
   },
 
   // Legacy Tail removed for Modern Look
@@ -1489,7 +1494,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   nodeText: {
-    color: '#E2E8F0',
+    color: '#1E293B',
   },
 
   timeContainer: {
@@ -1533,12 +1538,11 @@ const styles = StyleSheet.create({
   },
 
   // Input Area (Modern Elevated Pill)
-  // Input Area
   inputArea: {
     padding: 16,
-    backgroundColor: 'rgba(7, 5, 15, 0.98)',
+    backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    borderTopColor: '#F1F5F9',
   },
   inputRow: {
     flexDirection: 'row',
@@ -1548,13 +1552,13 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: '#F8FAFC',
     borderRadius: 28,
     paddingHorizontal: 18,
     paddingVertical: Platform.OS === 'ios' ? 10 : 4,
     marginRight: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: '#E2E8F0',
   },
   emojiBtn: {
     marginRight: 10,
@@ -1565,7 +1569,7 @@ const styles = StyleSheet.create({
   chatInput: {
     flex: 1,
     fontSize: 16,
-    color: '#FFF',
+    color: '#1E293B',
     maxHeight: 120,
   },
   sendBtn: {
@@ -1576,7 +1580,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#6366F1',
-    shadowOpacity: 0.5,
+    shadowOpacity: 0.3,
     shadowRadius: 10,
     elevation: 8,
   },

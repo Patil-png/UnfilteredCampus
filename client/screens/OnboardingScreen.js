@@ -182,7 +182,6 @@ export default function OnboardingScreen({ user: sessionUser, onComplete }) {
       <View style={styles.rulesSection}>
         <Text style={styles.rulesHeading}>HOW IT WORKS</Text>
         {[
-          { emoji: '🏛️', rule: 'Pick your college — you get its global chat instantly' },
           { emoji: '👤', rule: 'You stay 100% anonymous, always' },
           { emoji: '🔒', rule: 'Messages stay inside your college group only' },
           { emoji: '🚫', rule: 'Respect others — no bullying allowed' },
@@ -210,24 +209,6 @@ export default function OnboardingScreen({ user: sessionUser, onComplete }) {
 
       {loading ? <ActivityIndicator color="#6366F1" size="large" style={{ marginTop: 40 }} /> : (
         <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 20 }}>
-          {/* Global Lounge option */}
-          {globalChannels.length > 0 && (
-            <TouchableOpacity
-              style={[styles.optionCard, { borderColor: '#818CF8', backgroundColor: '#EEF2FF' }]}
-              onPress={() => { setSelectedCollege(null); setSelectedCategory(null); setStep(4); }}
-              activeOpacity={0.85}
-            >
-              <View style={[styles.optionIconBox, { backgroundColor: '#818CF8' }]}>
-                <Text style={styles.optionEmoji}>🌐</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.optionName, { color: '#4338CA' }]}>Global Lounge</Text>
-                <Text style={styles.optionCount}>Open to all students</Text>
-              </View>
-              <View style={styles.joinNowBox}><Text style={styles.joinNowText}>JOIN</Text></View>
-            </TouchableOpacity>
-          )}
-
           <TouchableOpacity
             style={[styles.optionCard, { borderColor: '#10B981', backgroundColor: '#ECFDF5' }]}
             onPress={() => setStep(5)}
@@ -461,13 +442,13 @@ const CAT_COLORS = ['#6C5CE7', '#00CEC9', '#FDCB6E', '#E17055', '#74B9FF', '#55E
 const CLASS_COLORS = ['#A29BFE', '#FD79A8', '#55EFC4', '#FDCB6E', '#74B9FF', '#FF7675'];
 
 const styles = StyleSheet.create({
-  page: { flex: 1, paddingHorizontal: 22, paddingTop: 56, paddingBottom: 24 },
+  page: { flex: 1, paddingHorizontal: 22, paddingTop: 56, paddingBottom: 24, backgroundColor: '#FDFBF7' },
 
   // Hero Banner
   heroBanner: {
     backgroundColor: '#6366F1', borderRadius: 28, padding: 30,
     alignItems: 'center', marginBottom: 24,
-    shadowColor: '#6366F1', shadowOpacity: 0.3, shadowRadius: 20, elevation: 10,
+    shadowColor: '#6366F1', shadowOpacity: 0.25, shadowRadius: 20, elevation: 12,
   },
   heroGradientBadge: {
     backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20,
@@ -479,37 +460,38 @@ const styles = StyleSheet.create({
   heroSubtitle: { fontSize: 14, color: 'rgba(255,255,255,0.8)', textAlign: 'center', fontWeight: '600' },
 
   // Rules
-  rulesSection: { marginBottom: 24 },
-  rulesHeading: { fontSize: 10, fontWeight: '900', color: '#ADB5BD', letterSpacing: 2, marginBottom: 14 },
+  rulesSection: { marginBottom: 16 },
+  rulesHeading: { fontSize: 10, fontWeight: '900', color: '#94A3B8', letterSpacing: 2, marginBottom: 14 },
   ruleCard: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#FFF', borderRadius: 16, padding: 16, marginBottom: 10,
-    shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
+    backgroundColor: '#FFF', borderRadius: 16, padding: 10, marginBottom: 6,
+    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
+    borderWidth: 1, borderColor: '#F1F3F5',
   },
   ruleIconBox: {
-    width: 44, height: 44, borderRadius: 14,
-    backgroundColor: '#F1F3F5', justifyContent: 'center', alignItems: 'center', marginRight: 14,
+    width: 36, height: 36, borderRadius: 12,
+    backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center', marginRight: 12,
   },
-  ruleEmoji: { fontSize: 22 },
-  ruleText: { flex: 1, fontSize: 14, fontWeight: '600', color: '#374151', lineHeight: 20 },
+  ruleEmoji: { fontSize: 18 },
+  ruleText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#1E293B', lineHeight: 18 },
 
   // Primary Button
   primaryBtn: {
-    backgroundColor: '#6366F1', borderRadius: 18, paddingVertical: 20,
+    backgroundColor: '#6366F1', borderRadius: 18, paddingVertical: 16,
     alignItems: 'center',
-    shadowColor: '#6366F1', shadowOpacity: 0.4, shadowRadius: 16, elevation: 8,
+    shadowColor: '#6366F1', shadowOpacity: 0.35, shadowRadius: 16, elevation: 8,
   },
   primaryBtnText: { color: '#FFF', fontSize: 16, fontWeight: '900', letterSpacing: 0.3 },
 
   // Progress
   progressRow: { flexDirection: 'row', gap: 6, marginBottom: 20 },
-  progressSegment: { flex: 1, height: 5, borderRadius: 3, backgroundColor: '#E9ECEF' },
+  progressSegment: { flex: 1, height: 5, borderRadius: 3, backgroundColor: 'rgba(0,0,0,0.05)' },
   progressSegmentActive: { backgroundColor: '#6366F1' },
 
   // Step
   stepLabel: { fontSize: 10, fontWeight: '900', color: '#6366F1', letterSpacing: 2, marginBottom: 8 },
-  stepHeading: { fontSize: 26, fontWeight: '900', color: '#111827', lineHeight: 32, marginBottom: 6 },
-  stepSub: { fontSize: 14, color: '#6B7280', fontWeight: '500', marginBottom: 4 },
+  stepHeading: { fontSize: 26, fontWeight: '900', color: '#1E293B', lineHeight: 32, marginBottom: 6 },
+  stepSub: { fontSize: 14, color: '#64748B', fontWeight: '500', marginBottom: 4 },
 
   // Back
   backBtn: { marginBottom: 12, alignSelf: 'flex-start' },
@@ -518,25 +500,25 @@ const styles = StyleSheet.create({
   // Option Cards
   optionCard: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#FFF', borderRadius: 18, padding: 16, marginBottom: 12,
-    borderWidth: 1.5, borderColor: '#F1F3F5',
+    backgroundColor: '#FFF', borderRadius: 18, padding: 12, marginBottom: 10,
+    borderWidth: 1.5, borderColor: '#F1F5F9',
     shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
   },
   optionCardSelected: {
     borderColor: '#6366F1', backgroundColor: '#EEF2FF',
   },
   optionIconBox: {
-    width: 52, height: 52, borderRadius: 16,
-    justifyContent: 'center', alignItems: 'center', marginRight: 14,
+    width: 44, height: 44, borderRadius: 14,
+    justifyContent: 'center', alignItems: 'center', marginRight: 12,
   },
-  optionEmoji: { fontSize: 26 },
-  optionName: { fontSize: 16, fontWeight: '800', color: '#111827', marginBottom: 2 },
-  optionCount: { fontSize: 12, color: '#9CA3AF', fontWeight: '500' },
+  optionEmoji: { fontSize: 22 },
+  optionName: { fontSize: 15, fontWeight: '800', color: '#1E293B', marginBottom: 1 },
+  optionCount: { fontSize: 11, color: '#64748B', fontWeight: '500' },
   chevronBox: {
     width: 32, height: 32, borderRadius: 10,
-    backgroundColor: '#F1F3F5', justifyContent: 'center', alignItems: 'center',
+    backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center',
   },
-  chevron: { fontSize: 20, color: '#9CA3AF', fontWeight: '900' },
+  chevron: { fontSize: 20, color: '#94A3B8', fontWeight: '900' },
   checkBox: {
     width: 32, height: 32, borderRadius: 10,
     backgroundColor: '#6366F1', justifyContent: 'center', alignItems: 'center',
@@ -559,13 +541,13 @@ const styles = StyleSheet.create({
   // Empty
   emptyBox: { alignItems: 'center', paddingVertical: 40 },
   emptyEmoji: { fontSize: 44, marginBottom: 12 },
-  emptyText: { fontSize: 14, color: '#9CA3AF', textAlign: 'center', lineHeight: 22, fontWeight: '500' },
+  emptyText: { fontSize: 14, color: '#94A3B8', textAlign: 'center', lineHeight: 22, fontWeight: '500' },
 
   // Finish Button
   finishBtn: {
-    backgroundColor: '#111827', borderRadius: 18, paddingVertical: 20,
+    backgroundColor: '#1E293B', borderRadius: 18, paddingVertical: 16,
     alignItems: 'center', marginTop: 20,
-    shadowColor: '#111827', shadowOpacity: 0.2, shadowRadius: 14, elevation: 6,
+    shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 14, elevation: 6,
   },
   finishBtnText: { color: '#FFF', fontSize: 17, fontWeight: '900' },
   finishBtnSub: { color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '600', marginTop: 4 },

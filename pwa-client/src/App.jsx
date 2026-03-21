@@ -29,16 +29,18 @@ function App() {
         // CHECK ONBOARDING STATUS
         const isDoneLocally = localStorage.getItem(ONBOARDING_DONE_KEY) === 'true';
         if (!isDoneLocally) {
-          // Verify with backend
           try {
             const { data: prof } = await axios.get(`${BACKEND_URL}/api/profiles/user/${parsed.user.id}`);
-            if (!prof || !prof.selected_channel_id) {
-              setShowOnboarding(true);
-            } else {
+            if (prof && prof.selected_channel_id) {
+              // They have a selected class, so they've finished onboarding
               localStorage.setItem(ONBOARDING_DONE_KEY, 'true');
+              setShowOnboarding(false);
+            } else {
+              setShowOnboarding(true);
             }
           } catch (e) {
-            setShowOnboarding(true);
+            // Error fetching? Safe bet is home screen
+            setShowOnboarding(false);
           }
         }
       }
@@ -49,19 +51,21 @@ function App() {
     }
   };
 
-  const handleLoginSuccess = (user, wasLogin, maskId) => {
+  const handleLoginSuccess = (user, wasLogin, maskId, profile) => {
     const sessionData = { user, maskId };
     localStorage.setItem(USER_SESSION_KEY, JSON.stringify(sessionData));
     setSession(sessionData);
     
-    // If it was a signup, ALWAYS show onboarding
+    // REGISTRATION vs LOGIN logic
     if (!wasLogin) {
+      // Sign Up: Always show onboarding to guide fresh users
       setShowOnboarding(true);
       localStorage.removeItem(ONBOARDING_DONE_KEY);
     } else {
-      // For login, check if they already have a selection
-      const isDone = localStorage.getItem(ONBOARDING_DONE_KEY) === 'true';
-      setShowOnboarding(!isDone);
+      // Sign In: Returning user - NEVER show onboarding unless they explicitly ask
+      // Trust that they already have a community or know how to find one
+      localStorage.setItem(ONBOARDING_DONE_KEY, 'true');
+      setShowOnboarding(false);
     }
     setCurrentScreen('home');
   };

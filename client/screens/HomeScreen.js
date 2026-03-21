@@ -19,6 +19,7 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [userGroup, setUserGroup] = useState(propGroup);
+  const [expandedColleges, setExpandedColleges] = useState({});
   const [showFullDirectory, setShowFullDirectory] = useState(false);
   const [privateGroups, setPrivateGroups] = useState([]);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
@@ -367,60 +368,80 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
               const cats = getCatsByCollege(college.id);
               const hasCats = cats.some(cat => getChannelsByCat(cat.id).length > 0);
               return (
-                <View key={college.id} style={styles.section}>
+                <View key={college.id} style={[styles.section, { paddingBottom: 0 }]}>
                   <TouchableOpacity
-                    style={[styles.collegeHeader, { borderLeftColor: CARD_COLORS[ci % CARD_COLORS.length] }]}
-                    onPress={() => {
-                      if (collegeChannel) onJoinChat({ collegeId: college.id, categoryId: null, channel: collegeChannel });
-                    }}
+                    style={[
+                      styles.collegeHeader, 
+                      { borderLeftColor: CARD_COLORS[ci % CARD_COLORS.length] },
+                      expandedColleges[college.id] && styles.collegeHeaderExpanded
+                    ]}
+                    onPress={() => setExpandedColleges(prev => ({ ...prev, [college.id]: !prev[college.id] }))}
                     activeOpacity={0.85}
                   >
                     <Text style={styles.collegeHeaderEmoji}>{college.icon || '🏛️'}</Text>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.collegeHeaderName}>{college.name}</Text>
-                      {collegeChannel
-                        ? <Text style={styles.collegeHeaderSub}>Tap to enter college chat</Text>
-                        : <Text style={[styles.collegeHeaderSub, { color: '#F59E0B' }]}>No chat room yet — ask admin</Text>
-                      }
+                      <Text style={styles.collegeHeaderSub}>
+                        {expandedColleges[college.id] ? 'Viewing categories' : 'Tap to explore campus'}
+                      </Text>
                     </View>
-                    {collegeChannel && (
-                      <View style={styles.joinChip}><Text style={styles.joinChipText}>JOIN →</Text></View>
-                    )}
+                    <View style={{ 
+                      transform: [{ rotate: expandedColleges[college.id] ? '180deg' : '0deg' }],
+                      marginRight: 8
+                    }}>
+                      <Text style={{ fontSize: 10, color: '#94A3B8', fontWeight: '900' }}>▼</Text>
+                    </View>
                   </TouchableOpacity>
 
                   {/* Render Categories & Classes inside this College */}
-                  {cats.map((cat, catIdx) => {
-                    const chans = getChannelsByCat(cat.id);
-                    if (chans.length === 0) return null; // Only show categories with actual channels
-                    return (
-                      <View key={cat.id} style={[styles.categoryBlock, { backgroundColor: CAT_BG[catIdx % CAT_BG.length] }]}>
-                        <View style={styles.categoryLabelRow}>
-                          <Text style={styles.categoryEmoji}>{cat.icon || '📁'}</Text>
-                          <Text style={styles.categoryName}>{cat.name}</Text>
-                          <Text style={styles.categoryCount}>{chans.length} classes</Text>
-                        </View>
-                        {/* Class Grid */}
-                        <View style={styles.classGrid}>
-                          {chans.map((ch, chi) => (
-                            <TouchableOpacity
-                              key={ch.id}
-                              style={styles.classChip}
-                              onPress={() => onJoinChat({ collegeId: college.id, categoryId: cat.id, channel: { id: ch.id, name: ch.name, icon: ch.icon } })}
-                              activeOpacity={0.85}
-                            >
-                              <View style={[styles.classChipIcon, { backgroundColor: CARD_COLORS[(ci + chi) % CARD_COLORS.length] + '20' }]}>
-                                <Text style={styles.classChipEmoji}>{ch.icon}</Text>
-                              </View>
-                              <Text style={styles.classChipName} numberOfLines={1}>{ch.name}</Text>
-                              <View style={styles.classChipJoin}>
-                                <Text style={styles.classChipJoinText}>→</Text>
-                              </View>
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      </View>
-                    );
-                  })}
+                  {expandedColleges[college.id] && (
+                    <View style={styles.nestedSection}>
+                      <View style={styles.connector} />
+                      
+                      {collegeChannel && (
+                        <TouchableOpacity 
+                          style={styles.collegeChatLink}
+                          onPress={() => onJoinChat({ collegeId: college.id, categoryId: null, channel: collegeChannel })}
+                        >
+                          <Text style={{ fontSize: 16, marginRight: 8 }}>🏛️</Text>
+                          <Text style={styles.collegeChatLinkText}>Main College Lounge</Text>
+                          <Text style={{ fontSize: 12, color: '#6366F1', fontWeight: '900' }}>JOIN →</Text>
+                        </TouchableOpacity>
+                      )}
+
+                      {cats.map((cat, catIdx) => {
+                        const chans = getChannelsByCat(cat.id);
+                        if (chans.length === 0) return null;
+                        return (
+                          <View key={cat.id} style={styles.categoryBlock}>
+                            <View style={styles.categoryLabelRow}>
+                              <Text style={styles.categoryEmoji}>{cat.icon || '📁'}</Text>
+                              <Text style={styles.categoryName}>{cat.name}</Text>
+                              <Text style={styles.categoryCount}>{chans.length} groups</Text>
+                            </View>
+                            <View style={styles.classGrid}>
+                              {chans.map((ch, chi) => (
+                                <TouchableOpacity
+                                  key={ch.id}
+                                  style={styles.classChip}
+                                  onPress={() => onJoinChat({ collegeId: college.id, categoryId: cat.id, channel: { id: ch.id, name: ch.name, icon: ch.icon } })}
+                                  activeOpacity={0.85}
+                                >
+                                  <View style={[styles.classChipIcon, { backgroundColor: CARD_COLORS[(ci + chi) % CARD_COLORS.length] + '20' }]}>
+                                    <Text style={styles.classChipEmoji}>{ch.icon}</Text>
+                                  </View>
+                                  <Text style={styles.classChipName} numberOfLines={1}>{ch.name}</Text>
+                                  <View style={styles.classChipJoin}>
+                                    <Text style={styles.classChipJoinText}>→</Text>
+                                  </View>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
                 </View>
               );
             })}
@@ -467,26 +488,26 @@ export default function HomeScreen({ user, userGroup: propGroup, onJoinChat, onO
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8F9FA' },
+  container: { flex: 1, backgroundColor: '#FDFBF7' },
 
   header: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingTop: 56, paddingHorizontal: 22, paddingBottom: 16,
-    backgroundColor: '#FFF', borderBottomWidth: 1, borderColor: '#F1F3F5',
+    paddingTop: 56, paddingHorizontal: 20, paddingBottom: 12,
+    backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderColor: '#F1F5F9',
   },
-  headerGreeting: { fontSize: 11, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.5 },
-  headerTitle: { fontSize: 22, fontWeight: '900', color: '#111827', letterSpacing: -0.5 },
+  headerGreeting: { fontSize: 11, fontWeight: '700', color: '#94A3B8', letterSpacing: 0.5 },
+  headerTitle: { fontSize: 22, fontWeight: '900', color: '#1E293B', letterSpacing: -0.5 },
   profileBtn: {
     width: 44, height: 44, borderRadius: 22,
-    backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center',
-    borderWidth: 1.5, borderColor: '#C7D2FE',
+    backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1.5, borderColor: '#E2E8F0',
   },
   profileBtnText: { fontSize: 20 },
 
   heroBanner: {
-    margin: 20, borderRadius: 24, padding: 24,
+    margin: 16, borderRadius: 24, padding: 20,
     backgroundColor: '#6366F1', flexDirection: 'row', alignItems: 'center',
-    shadowColor: '#6366F1', shadowOpacity: 0.3, shadowRadius: 16, elevation: 8,
+    shadowColor: '#6366F1', shadowOpacity: 0.15, shadowRadius: 16, elevation: 8,
   },
   heroBannerLeft: { flex: 1 },
   heroBannerBadge: {
@@ -496,17 +517,17 @@ const styles = StyleSheet.create({
   heroBannerSub: { fontSize: 11, color: 'rgba(255,255,255,0.7)', fontWeight: '600' },
   heroBannerEmoji: { fontSize: 56, marginLeft: 12 },
 
-  loadingText: { marginTop: 14, fontSize: 14, color: '#9CA3AF', fontWeight: '600' },
+  loadingText: { marginTop: 14, fontSize: 14, color: '#94A3B8', fontWeight: '600' },
 
-  section: { paddingHorizontal: 20, marginTop: 8, marginBottom: 4 },
-  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  sectionLabel: { fontSize: 13, fontWeight: '900', color: '#111827' },
-  sectionSub: { fontSize: 11, color: '#9CA3AF', fontWeight: '600' },
+  section: { paddingHorizontal: 16, marginTop: 4, marginBottom: 2 },
+  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  sectionLabel: { fontSize: 13, fontWeight: '900', color: '#1E293B' },
+  sectionSub: { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
 
   // Global Lounge horizontal cards
   globalCard: {
-    width: 160, borderRadius: 20, padding: 18, marginRight: 12, marginLeft: 4,
-    shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, elevation: 3,
+    width: 150, borderRadius: 20, padding: 16, marginRight: 12, marginLeft: 4,
+    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, elevation: 3,
   },
   globalCardEmoji: { fontSize: 30, marginBottom: 10 },
   globalCardName: { fontSize: 15, fontWeight: '900', color: '#FFF', marginBottom: 12, lineHeight: 20 },
@@ -518,39 +539,43 @@ const styles = StyleSheet.create({
 
   // College row — tap to join
   collegeHeader: {
-    flexDirection: 'row', alignItems: 'center', paddingVertical: 16, paddingHorizontal: 16,
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14,
     borderLeftWidth: 5, borderRadius: 14, marginBottom: 4,
-    backgroundColor: '#FFF',
-    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, elevation: 1,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 6, elevation: 1,
   },
   collegeHeaderEmoji: { fontSize: 26, marginRight: 12 },
-  collegeHeaderName: { fontSize: 16, fontWeight: '900', color: '#111827' },
-  collegeHeaderSub: { fontSize: 11, color: '#9CA3AF', marginTop: 2, fontWeight: '500' },
-  joinChip: {
-    backgroundColor: '#EEF2FF', borderRadius: 12,
-    paddingHorizontal: 12, paddingVertical: 8,
-    borderWidth: 1, borderColor: '#C7D2FE',
+  collegeHeaderName: { fontSize: 16, fontWeight: '900', color: '#1E293B', marginBottom: 1 },
+  collegeHeaderSub: { fontSize: 11, color: '#64748B', fontWeight: '700' },
+  collegeHeaderExpanded: { backgroundColor: 'rgba(0,0,0,0.02)', borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderBottomWidth: 0 },
+  nestedSection: { paddingLeft: 12, position: 'relative', marginTop: -4 },
+  connector: { position: 'absolute', left: 24, top: 0, bottom: 20, width: 1.5, backgroundColor: '#F1F5F9', zIndex: 0 },
+  collegeChatLink: { 
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#EEF2FF', padding: 10, borderRadius: 12, marginLeft: 24, marginBottom: 8, marginTop: 4, 
+    borderWidth: 1, borderColor: '#6366F120'
   },
+  collegeChatLinkText: { flex: 1, fontSize: 13, fontWeight: '800', color: '#6366F1' },
+  joinChip: { backgroundColor: '#6366F1', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
   joinChipText: { fontSize: 11, fontWeight: '900', color: '#6366F1' },
 
   // Category block
-  categoryBlock: { borderRadius: 18, padding: 14, marginBottom: 12 },
-  categoryLabelRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, paddingHorizontal: 4 },
+  categoryBlock: { padding: 10, marginBottom: 8, marginLeft: 24 },
+  categoryLabelRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   categoryEmoji: { fontSize: 16, marginRight: 8 },
-  categoryName: { fontSize: 13, fontWeight: '900', color: '#374151', flex: 1 },
-  categoryCount: { fontSize: 10, fontWeight: '800', color: '#9CA3AF' },
+  categoryName: { fontSize: 13, fontWeight: '900', color: '#475569', flex: 1 },
+  categoryCount: { fontSize: 10, fontWeight: '800', color: '#94A3B8' },
 
   // Class grid chips
   classGrid: { gap: 8 },
   classChip: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#FFF', borderRadius: 14, padding: 12,
-    borderWidth: 1, borderColor: '#E5E7EB',
-    shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 4, elevation: 1,
+    backgroundColor: '#FFFFFF', borderRadius: 14, padding: 12,
+    borderWidth: 1, borderColor: '#F1F5F9',
+    shadowColor: '#000', shadowOpacity: 0.02, shadowRadius: 4, elevation: 1,
   },
   classChipIcon: { width: 38, height: 38, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 10 },
   classChipEmoji: { fontSize: 20 },
-  classChipName: { flex: 1, fontSize: 14, fontWeight: '800', color: '#111827' },
+  classChipName: { flex: 1, fontSize: 14, fontWeight: '800', color: '#1E293B' },
   classChipJoin: {
     width: 30, height: 30, borderRadius: 10,
     backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center',
@@ -558,21 +583,21 @@ const styles = StyleSheet.create({
   classChipJoinText: { fontSize: 14, color: '#6366F1', fontWeight: '900' },
 
   // My Class Card
-  mySection: { paddingHorizontal: 20, marginTop: 4, marginBottom: 12 },
+  mySection: { paddingHorizontal: 16, marginTop: 2, marginBottom: 8 },
   myClassCard: { 
-    backgroundColor: '#FFF', borderRadius: 24, padding: 20, 
+    backgroundColor: '#FFFFFF', borderRadius: 24, padding: 16, 
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     borderWidth: 2, borderColor: '#6366F1',
-    shadowColor: '#6366F1', shadowOpacity: 0.15, shadowRadius: 12, elevation: 5,
+    shadowColor: '#6366F1', shadowOpacity: 0.06, shadowRadius: 12, elevation: 5,
   },
   myClassLeft: { flexDirection: 'row', alignItems: 'center' },
   myClassIconBox: { 
     width: 48, height: 48, borderRadius: 14, 
-    backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center', marginRight: 14,
+    backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center', marginRight: 14,
   },
   myClassEmoji: { fontSize: 24 },
   myClassLabel: { fontSize: 10, fontWeight: '900', color: '#6366F1', letterSpacing: 1, marginBottom: 2 },
-  myClassName: { fontSize: 17, fontWeight: '900', color: '#111827' },
+  myClassName: { fontSize: 17, fontWeight: '900', color: '#1E293B' },
   enterChatBtn: { 
     backgroundColor: '#6366F1', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10,
     shadowColor: '#6366F1', shadowOpacity: 0.3, shadowRadius: 8, elevation: 3,
@@ -585,18 +610,18 @@ const styles = StyleSheet.create({
   // Empty
   emptyBox: { marginTop: 60, padding: 40, alignItems: 'center' },
   emptyEmoji: { fontSize: 52, marginBottom: 16 },
-  emptyTitle: { fontSize: 20, fontWeight: '900', color: '#111827', marginBottom: 8 },
-  emptySub: { fontSize: 13, color: '#9CA3AF', textAlign: 'center', lineHeight: 20 },
+  emptyTitle: { fontSize: 20, fontWeight: '900', color: '#1E293B', marginBottom: 8 },
+  emptySub: { fontSize: 13, color: '#94A3B8', textAlign: 'center', lineHeight: 20 },
 
   // Prompt Modal Styles (Added for Creating Group natively)
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  promptCard: { backgroundColor: '#FFF', width: '100%', borderRadius: 20, padding: 24, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 10 },
-  promptTitle: { fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 8 },
-  promptSub: { fontSize: 14, color: '#6B7280', marginBottom: 20 },
-  promptInput: { backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, fontSize: 16, color: '#111827', marginBottom: 24 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  promptCard: { backgroundColor: '#FFFFFF', width: '100%', borderRadius: 20, padding: 24, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 15, elevation: 15 },
+  promptTitle: { fontSize: 18, fontWeight: '800', color: '#1E293B', marginBottom: 8 },
+  promptSub: { fontSize: 14, color: '#64748B', marginBottom: 20 },
+  promptInput: { backgroundColor: '#F8FAFC', borderRadius: 12, padding: 14, fontSize: 16, color: '#1E293B', marginBottom: 24, borderWidth: 1, borderColor: '#E2E8F0' },
   promptActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
   promptBtnCancel: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10, justifyContent: 'center' },
-  promptBtnCancelText: { color: '#6B7280', fontWeight: '700', fontSize: 15 },
+  promptBtnCancelText: { color: '#64748B', fontWeight: '700', fontSize: 15 },
   promptBtnSubmit: { backgroundColor: '#10B981', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, minWidth: 80, alignItems: 'center', justifyContent: 'center' },
   promptBtnSubmitText: { color: '#FFF', fontWeight: '700', fontSize: 15 },
 });
