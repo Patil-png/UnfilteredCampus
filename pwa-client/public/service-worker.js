@@ -14,18 +14,29 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = event.request.url;
 
-  // 1. Bypass ServiceWorker for API calls, WebSockets, etc.
-  if (!url.startsWith('http') || url.includes('/api/') || url.includes('api.')) {
-    return; // Let the browser handle this naturally
+  // 🚨 CRITICAL: Bypass ServiceWorker for ALL API calls and external domains
+  // We check for /api/ and api.incog.sbs to ensure real-time communication is never blocked
+  if (!url.startsWith('http') || url.includes('/api/') || url.includes('api.incog.sbs')) {
+    return; // Hand control back to the browser immediately
   }
-
 
   event.respondWith(
     fetch(event.request)
       .catch(async () => {
-        const cache = await caches.open(CACHE_NAME);
-        const cachedResponse = await cache.match(event.request);
-        return cachedResponse || new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
+        try {
+          const cache = await caches.open(CACHE_NAME);
+          const cachedResponse = await cache.match(event.request);
+          if (cachedResponse) return cachedResponse;
+          
+          // If no cache, return a friendly offline response instead of undefined
+          return new Response('Network Error', { 
+            status: 408, 
+            statusText: 'Network Timeout or CORS failure',
+            headers: { 'Content-Type': 'text/plain' }
+          });
+        } catch (err) {
+          return new Response('Fatal ServiceWorker Error', { status: 500 });
+        }
       })
   );
 });
