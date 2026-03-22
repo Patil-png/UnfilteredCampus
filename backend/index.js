@@ -11,8 +11,8 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors({
-  origin: '*', // TODO: Restore origin whitelist before production
-  credentials: false, // Must be false with wildcard origin
+  origin: ['https://incog.sbs', 'https://www.incog.sbs', 'http://localhost:5173'],
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -1146,6 +1146,142 @@ app.post('/api/messages/:messageId/delete-for-me', async (req, res) => {
     res.json({ success: true, message: 'Message hidden for user' });
   } catch (error) {
     console.error('[BACKEND] Delete for me error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================================
+// 🎭 RANDOM ANON CHAT — Match Queue API
+// ============================================================
+
+// Join the matchmaking queue (or instantly match if someone is waiting)
+app.post('/api/match/join', async (req, res) => {
+  const { maskId, userId, collegeId } = req.body;
+  if (!maskId || !userId) return res.status(400).json({ error: 'maskId and userId required' });
+
+  try {
+    // Remove user from queue if already in it (prevent duplicates)
+    await supabaseAdmin.from('match_queue').delete().eq('mask_id', maskId);
+
+    // Find another waiting user in the queue (optionally same college)
+    let query = supabaseAdmin
+      .from('match_queue')
+      .select('*')
+      .neq('mask_id', maskId)
+      .order('joined_at', { ascending: true })
+      .limit(1);
+
+    const { data: waiting } = await query;
+    const partner = waiting?.[0];
+
+    if (partner) {
+      // --- MATCH FOUND! ---
+      // Remove partner from queue
+      await supabaseAdmin.from('match_queue').delete().eq('mask_id', partner.mask_id);
+
+      // Create a new private channel for this match
+      const channelName = `anon-${Date.now()}`;
+      const { data: newChannel, error: chanErr } = await supabaseAdmin
+        .from('channels')
+        .insert({
+          name: channelName,
+          icon: '🎭',
+          is_private: true,
+          status: 'active',
+          type: 'random_match'
+        })
+        .select()
+        .single();
+
+      if (chanErr) throw chanErr;
+
+      // Record the match
+      await supabaseAdmin.from('random_matches').insert({
+        channel_id: newChannel.id,
+        mask_id_1: maskId,
+        mask_id_2: partner.mask_id,
+        user_id_1: userId,
+        user_id_2: partner.user_id
+      });
+
+      return res.json({
+        matched: true,
+        channel: newChannel,
+        partnerMaskId: partner.mask_id
+      });
+    } else {
+      // --- NO MATCH YET — Add to queue ---
+      await supabaseAdmin.from('match_queue').insert({
+        mask_id: maskId,
+        user_id: userId,
+        college_id: collegeId || null
+      });
+
+      return res.json({ matched: false, waiting: true });
+    }
+  } catch (err) {
+    console.error('[MATCH] Join error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Leave the queue or end an active match
+app.post('/api/match/leave', async (req, res) => {
+  const { maskId, channelId } = req.body;
+  if (!maskId) return res.status(400).json({ error: 'maskId required' });
+
+  try {
+    // Remove from queue
+    await supabaseAdmin.from('match_queue').delete().eq('mask_id', maskId);
+
+    // If in an active match, mark it as ended and delete the temp channel
+    if (channelId) {
+      await supabaseAdmin
+        .from('random_matches')
+        .update({ ended_at: new Date().toISOString() })
+        .eq('channel_id', channelId);
+
+      // Delete the temporary channel (messages get cascade deleted)
+      await supabaseAdmin.from('channels').delete().eq('id', channelId).eq('type', 'random_match');
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[MATCH] Leave error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Check if a user is currently matched (poll-based fallback)
+app.get('/api/match/status/:maskId', async (req, res) => {
+  const { maskId } = req.params;
+  try {
+    // Check if still in queue
+    const { data: inQueue } = await supabaseAdmin
+      .from('match_queue')
+      .select('*')
+      .eq('mask_id', maskId)
+      .maybeSingle();
+
+    if (inQueue) return res.json({ status: 'waiting' });
+
+    // Check if in an active match
+    const { data: match } = await supabaseAdmin
+      .from('random_matches')
+      .select('*, channel:channel_id(*)')
+      .or(`mask_id_1.eq.${maskId},mask_id_2.eq.${maskId}`)
+      .is('ended_at', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (match) {
+      return res.json({ status: 'matched', channel: match.channel });
+    }
+
+    return res.json({ status: 'idle' });
+  } catch (err) {
+    console.error('[MATCH] Status error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

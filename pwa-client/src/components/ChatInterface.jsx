@@ -3,6 +3,7 @@ import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../supabaseClient';
 import CustomAlert from './CustomAlert';
+import RandomChatScreen from './RandomChatScreen';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://192.168.29.243:5000';
 const SELECTED_GROUP_KEY = 'pinned_campus_class_v4';
@@ -42,6 +43,7 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
   const [pendingInvites, setPendingInvites] = useState([]);
   const [userSearchResults, setUserSearchResults] = useState([]);
   const [isSearchingUsers, setIsSearchingUsers] = useState(false);
+  const [showRandomChat, setShowRandomChat] = useState(false);
 
 
 
@@ -764,6 +766,16 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
 
   return (
     <div style={styles.container}>
+      {/* RANDOM CHAT OVERLAY */}
+      <AnimatePresence>
+        {showRandomChat && (
+          <RandomChatScreen
+            user={user}
+            maskId={propMaskId}
+            onExit={() => setShowRandomChat(false)}
+          />
+        )}
+      </AnimatePresence>
       {/* SIDEBAR OVERLAY (Mobile only) */}
       <AnimatePresence>
         {isSidebarOpen && window.innerWidth <= 768 && (
@@ -942,6 +954,32 @@ const ChatInterface = ({ user, maskId: propMaskId, onOpenProfile, onLogout }) =>
             </div>
 
             <div style={{ padding: '20px', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 20px)', borderTop: '1px solid rgba(0,0,0,0.05)' }}>
+              {/* ANONYMOUS RANDOM CHAT ENTRY */}
+              <motion.button
+                whileHover={{ scale: 1.02, background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)' }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => setShowRandomChat(true)}
+                style={{
+                  width: '100%',
+                  padding: '13px',
+                  borderRadius: '14px',
+                  border: 'none',
+                  background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(139,92,246,0.12))',
+                  color: '#6366F1',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  marginBottom: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  letterSpacing: '0.3px',
+                  transition: 'all 0.3s'
+                }}
+              >
+                <span>🎭</span> Find a Stranger
+              </motion.button>
               <button 
                 onClick={onLogout} 
                 style={{ 
