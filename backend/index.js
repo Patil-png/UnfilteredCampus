@@ -1187,8 +1187,7 @@ app.post('/api/match/join', async (req, res) => {
           name: channelName,
           icon: '🎭',
           is_private: true,
-          status: 'active',
-          type: 'random_match'
+          status: 'active'
         })
         .select()
         .single();
@@ -1242,7 +1241,7 @@ app.post('/api/match/leave', async (req, res) => {
         .eq('channel_id', channelId);
 
       // Delete the temporary channel (messages get cascade deleted)
-      await supabaseAdmin.from('channels').delete().eq('id', channelId).eq('type', 'random_match');
+      await supabaseAdmin.from('channels').delete().eq('id', channelId);
     }
 
     res.json({ success: true });
@@ -1252,21 +1251,69 @@ app.post('/api/match/leave', async (req, res) => {
   }
 });
 
-// Check if a user is currently matched (poll-based fallback)
+// Check if a user is currently matched — AND attempt a match if 2 users are both waiting
 app.get('/api/match/status/:maskId', async (req, res) => {
   const { maskId } = req.params;
   try {
-    // Check if still in queue
+    // 1. Check if this user is still in the queue
     const { data: inQueue } = await supabaseAdmin
       .from('match_queue')
       .select('*')
       .eq('mask_id', maskId)
       .maybeSingle();
 
-    if (inQueue) return res.json({ status: 'waiting' });
+    if (inQueue) {
+      // Check if someone else is also waiting
+      const { data: others } = await supabaseAdmin
+        .from('match_queue')
+        .select('*')
+        .neq('mask_id', maskId)
+        .order('joined_at', { ascending: true })
+        .limit(1);
 
-    // Check if in an active match
-    const { data: match } = await supabaseAdmin
+      const partner = others?.[0];
+      if (partner) {
+        // 🎯 TIE-BREAKING: Only the alphabetically smaller maskId creates the match.
+        // This ensures exactly ONE of the two simultaneous pollers creates the channel.
+        const sorted = [maskId, partner.mask_id].sort();
+        const iAmCreator = sorted[0] === maskId;
+
+        if (!iAmCreator) {
+          // I'm the 'waiter' — the other user will create the match.
+          // Just return waiting so I keep polling.
+          return res.json({ status: 'waiting' });
+        }
+
+        // I'm the 'creator' — atomically create the match
+        await supabaseAdmin.from('match_queue').delete().eq('mask_id', maskId);
+        await supabaseAdmin.from('match_queue').delete().eq('mask_id', partner.mask_id);
+
+        const channelName = `anon-${Date.now()}`;
+        const { data: newChannel, error: chanErr } = await supabaseAdmin
+          .from('channels')
+          .insert({ name: channelName, icon: '🎭', is_private: true, status: 'active' })
+          .select()
+          .single();
+
+        if (chanErr) throw chanErr;
+
+        await supabaseAdmin.from('random_matches').insert({
+          channel_id: newChannel.id,
+          mask_id_1: maskId,
+          mask_id_2: partner.mask_id,
+          user_id_1: inQueue.user_id,
+          user_id_2: partner.user_id
+        });
+
+        console.log(`[MATCH] Created: ${maskId} <-> ${partner.mask_id}`);
+        return res.json({ status: 'matched', channel: newChannel });
+      }
+
+      return res.json({ status: 'waiting' });
+    }
+
+    // 2. Not in queue — check if there is an active match
+    const { data: match, error: matchErr } = await supabaseAdmin
       .from('random_matches')
       .select('*, channel:channel_id(*)')
       .or(`mask_id_1.eq.${maskId},mask_id_2.eq.${maskId}`)
@@ -1275,7 +1322,7 @@ app.get('/api/match/status/:maskId', async (req, res) => {
       .limit(1)
       .maybeSingle();
 
-    if (match) {
+    if (match && match.channel) {
       return res.json({ status: 'matched', channel: match.channel });
     }
 

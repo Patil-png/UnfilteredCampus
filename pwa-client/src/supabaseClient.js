@@ -9,4 +9,14 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     autoRefreshToken: true,
     detectSessionInUrl: true,
   },
+  realtime: {
+    params: {
+      eventsPerSecond: 10,
+    },
+    reconnectAfterMs: (tries) => Math.min(tries * 1000, 30000), // 1s, 2s, 3s... up to 30s
+    logger: () => {}, // Suppress noisy realtime logs in console
+  },
+  global: {
+    headers: { 'X-Client-Info': 'unfiltered-campus' },
+  },
 });

@@ -7,7 +7,7 @@ import CustomAlert from './CustomAlert';
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://192.168.29.243:5000';
 
 const RandomChatScreen = ({ user, maskId, onExit }) => {
-  const [phase, setPhase] = useState('idle');       // idle | waiting | chatting | ended
+  const [phase, setPhase] = useState('idle');
   const [matchedChannel, setMatchedChannel] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
@@ -15,36 +15,105 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
   const [dotCount, setDotCount] = useState(1);
   const [alert, setAlert] = useState({ visible: false, title: '', message: '', type: 'info' });
   const scrollRef = useRef(null);
-  const pollRef = useRef(null);
-  const realtimeRef = useRef(null);
+  const matchSubRef = useRef(null);    // Supabase sub watching random_matches
+  const chatSubRef = useRef(null);     // Supabase sub watching messages
+  const pollIntervalRef = useRef(null); // HTTP polling interval — stored as real ref to survive async gaps
+  const enteredChatRef = useRef(false); // Guard: ensure enterChat fires at most once per session
 
   const showAlert = (title, message, type = 'info') => setAlert({ visible: true, title, message, type });
 
-  // Animated dots for waiting screen
+  // Animated dots
   useEffect(() => {
-    if (phase === 'waiting') {
-      const iv = setInterval(() => setDotCount(d => (d % 3) + 1), 500);
-      return () => clearInterval(iv);
-    }
+    if (phase !== 'waiting') return;
+    const iv = setInterval(() => setDotCount(d => (d % 3) + 1), 500);
+    return () => clearInterval(iv);
   }, [phase]);
 
-  // Scroll to bottom when messages change
+  // Auto scroll
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
-  // Cleanup on unmount
+  // Cleanup all subscriptions on unmount
   useEffect(() => {
     return () => {
-      clearInterval(pollRef.current);
-      if (realtimeRef.current) realtimeRef.current.unsubscribe();
+      cleanupSubs();
     };
   }, []);
 
+  const cleanupSubs = () => {
+    if (matchSubRef.current) { matchSubRef.current.unsubscribe(); matchSubRef.current = null; }
+    if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+    if (chatSubRef.current) { chatSubRef.current.unsubscribe(); chatSubRef.current = null; }
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // KEY FIX: Use Supabase Realtime on `random_matches` table
+  // This fires INSTANTLY when User B creates the match row.
+  // No more unreliable HTTP polling every 3s.
+  // ─────────────────────────────────────────────────────────────
+  const subscribeToMatchQueue = () => {
+    if (matchSubRef.current) matchSubRef.current.unsubscribe();
+
+    matchSubRef.current = supabase
+      .channel(`match-watch-${maskId}-${Date.now()}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'random_matches'
+      }, async (payload) => {
+        const row = payload.new;
+        // Check if this match is for us
+        if (row.mask_id_1 === maskId || row.mask_id_2 === maskId) {
+          if (enteredChatRef.current) return; // HTTP poll already got here first
+          enteredChatRef.current = true;
+
+          matchSubRef.current?.unsubscribe();
+          matchSubRef.current = null;
+          if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+
+          // Fetch the channel data
+          const { data: channel } = await supabase
+            .from('channels')
+            .select('*')
+            .eq('id', row.channel_id)
+            .single();
+
+          if (channel) enterChat(channel);
+        }
+      })
+      .subscribe();
+  };
+
   const startMatchmaking = async () => {
     setPhase('waiting');
+    enteredChatRef.current = false;
+
+    // Subscribe to Realtime for instant notification when a match row is inserted
+    subscribeToMatchQueue();
+
+    // ⚠️ Create the poll interval BEFORE the await below.
+    // If we created it after and an instant match comes back (User B scenario),
+    // we'd call clearInterval(undefined) and the interval would leak forever.
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const statusRes = await axios.get(`${BACKEND_URL}/api/match/status/${maskId}`);
+        const { status, channel } = statusRes.data;
+
+        if (status === 'matched' && channel) {
+          if (enteredChatRef.current) return; // Realtime already got here first
+          enteredChatRef.current = true;
+          if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+          matchSubRef.current?.unsubscribe();
+          matchSubRef.current = null;
+          enterChat(channel);
+        }
+        // 'waiting' → still in queue, keep polling
+        // 'idle'    → tie-breaker removed us from queue but random_matches INSERT
+        //             may not be committed yet — keep polling, it'll appear next tick
+      } catch (_) {}
+    }, 2000);
+
     try {
       const res = await axios.post(`${BACKEND_URL}/api/match/join`, {
         maskId,
@@ -53,31 +122,31 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
       });
 
       if (res.data.matched) {
+        // We are User B — instant match found. Stop background loops.
+        if (enteredChatRef.current) return;
+        enteredChatRef.current = true;
+        if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+        matchSubRef.current?.unsubscribe();
+        matchSubRef.current = null;
         enterChat(res.data.channel);
-      } else {
-        // Poll every 3 seconds for a match
-        pollRef.current = setInterval(async () => {
-          try {
-            const statusRes = await axios.get(`${BACKEND_URL}/api/match/status/${maskId}`);
-            if (statusRes.data.status === 'matched') {
-              clearInterval(pollRef.current);
-              enterChat(statusRes.data.channel);
-            }
-          } catch (_) {}
-        }, 3000);
+        return;
       }
+      // We are User A — no one was waiting yet.
+      // The poll interval and Realtime sub are already running above.
+
     } catch (err) {
+      console.error('[MATCH] Join error:', err);
+      cleanupSubs();
       setPhase('idle');
-      showAlert('Error', 'Could not join matchmaking. Please try again.', 'error');
+      showAlert('Error', 'Could not connect to matchmaking. Make sure the backend is running.', 'error');
     }
   };
 
   const enterChat = (channel) => {
-    clearInterval(pollRef.current);
     setMatchedChannel(channel);
     setMessages([]);
     setPhase('chatting');
-    subscribeToChannel(channel.id);
+    subscribeToMessages(channel.id);
     fetchMessages(channel.id);
   };
 
@@ -91,17 +160,21 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
     setMessages(data || []);
   };
 
-  const subscribeToChannel = (channelId) => {
-    if (realtimeRef.current) realtimeRef.current.unsubscribe();
-    realtimeRef.current = supabase
-      .channel(`random-chat-${channelId}`)
+  const subscribeToMessages = (channelId) => {
+    if (chatSubRef.current) chatSubRef.current.unsubscribe();
+    chatSubRef.current = supabase
+      .channel(`anon-chat-${channelId}`)
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
         table: 'messages',
         filter: `channel_id=eq.${channelId}`
       }, (payload) => {
-        setMessages(prev => [...prev, payload.new]);
+        setMessages(prev => {
+          // Avoid duplicates
+          if (prev.find(m => m.id === payload.new.id)) return prev;
+          return [...prev, payload.new];
+        });
       })
       .subscribe();
   };
@@ -109,16 +182,19 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
   const sendMessage = async () => {
     if (!newMessage.trim() || !matchedChannel || sending) return;
     setSending(true);
+    const content = newMessage.trim();
+    setNewMessage('');
     try {
       const { error } = await supabase.from('messages').insert({
         channel_id: matchedChannel.id,
         sender_id: user.id,
-        content: newMessage.trim(),
+        content,
         mask_id: maskId,
         nickname: 'You'
       });
-      if (!error) setNewMessage('');
+      if (error) throw error;
     } catch (err) {
+      setNewMessage(content); // Restore on failure
       showAlert('Error', 'Could not send message.', 'error');
     } finally {
       setSending(false);
@@ -126,8 +202,7 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
   };
 
   const endChat = async () => {
-    clearInterval(pollRef.current);
-    if (realtimeRef.current) realtimeRef.current.unsubscribe();
+    cleanupSubs();
     try {
       await axios.post(`${BACKEND_URL}/api/match/leave`, {
         maskId,
@@ -140,7 +215,7 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
   };
 
   const leaveQueue = async () => {
-    clearInterval(pollRef.current);
+    cleanupSubs();
     try {
       await axios.post(`${BACKEND_URL}/api/match/leave`, { maskId });
     } catch (_) {}
@@ -148,10 +223,7 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   };
 
   const s = {
@@ -174,7 +246,7 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
     chatContainer: {
       background: 'rgba(255,255,255,0.02)', backdropFilter: 'blur(20px)',
       border: '1px solid rgba(255,255,255,0.08)', borderRadius: '24px',
-      width: '90%', maxWidth: '560px', height: '75vh', maxHeight: '680px',
+      width: '90%', maxWidth: '560px', height: '85vh', maxHeight: '700px',
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
       boxShadow: '0 25px 80px rgba(0,0,0,0.5)', position: 'relative', zIndex: 1
     },
@@ -184,34 +256,34 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
       display: 'flex', justifyContent: 'space-between', alignItems: 'center'
     },
     messagesArea: {
-      flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px',
+      flex: 1, overflowY: 'auto', padding: '20px 16px', display: 'flex', flexDirection: 'column', gap: '10px',
       scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent'
     },
     messageBubble: (isMe) => ({
-      maxWidth: '75%', padding: '10px 16px', borderRadius: isMe ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-      background: isMe ? 'linear-gradient(135deg, #6366F1, #8B5CF6)' : 'rgba(255,255,255,0.08)',
-      color: '#ffffff', fontSize: '14px', lineHeight: '1.5', fontWeight: '500',
+      maxWidth: '78%', padding: '11px 18px',
+      borderRadius: isMe ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+      background: isMe ? 'linear-gradient(135deg, #6366F1, #8B5CF6)' : 'rgba(255,255,255,0.1)',
+      color: '#ffffff', fontSize: '14px', lineHeight: '1.55', fontWeight: '500',
       alignSelf: isMe ? 'flex-end' : 'flex-start',
-      boxShadow: isMe ? '0 4px 16px rgba(99,102,241,0.3)' : 'none'
+      boxShadow: isMe ? '0 4px 16px rgba(99,102,241,0.3)' : 'none', wordBreak: 'break-word'
     }),
     senderLabel: (isMe) => ({
       fontSize: '10px', fontWeight: '700', letterSpacing: '0.8px', textTransform: 'uppercase',
-      color: isMe ? '#A5B4FC' : '#94A3B8', marginBottom: '4px',
-      textAlign: isMe ? 'right' : 'left'
+      color: isMe ? '#A5B4FC' : '#94A3B8', marginBottom: '4px', textAlign: isMe ? 'right' : 'left'
     }),
     inputRow: {
       padding: '16px', borderTop: '1px solid rgba(255,255,255,0.06)',
-      display: 'flex', gap: '12px', alignItems: 'center'
+      display: 'flex', gap: '10px', alignItems: 'flex-end'
     },
     input: {
       flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
       borderRadius: '16px', padding: '12px 18px', color: '#fff', fontSize: '14px',
-      outline: 'none', fontFamily: '"Inter", sans-serif'
+      outline: 'none', fontFamily: '"Inter", sans-serif', resize: 'none', maxHeight: '100px'
     },
     sendBtn: {
-      width: '44px', height: '44px', borderRadius: '14px',
+      width: '46px', height: '46px', borderRadius: '14px', flexShrink: 0,
       background: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
-      border: 'none', color: '#fff', fontSize: '18px', cursor: 'pointer',
+      border: 'none', color: '#fff', fontSize: '20px', cursor: 'pointer',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       boxShadow: '0 4px 16px rgba(99,102,241,0.4)'
     },
@@ -219,12 +291,12 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
       width: '100%', padding: '18px', borderRadius: '20px', border: 'none',
       background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)',
       color: '#fff', fontSize: '17px', fontWeight: '800', cursor: 'pointer',
-      boxShadow: '0 8px 32px rgba(99,102,241,0.4)', letterSpacing: '0.3px'
+      boxShadow: '0 8px 32px rgba(99,102,241,0.4)'
     },
     secondaryBtn: {
       padding: '12px 24px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.15)',
-      background: 'transparent', color: 'rgba(255,255,255,0.7)', fontSize: '14px',
-      fontWeight: '600', cursor: 'pointer', letterSpacing: '0.3px'
+      background: 'transparent', color: 'rgba(255,255,255,0.6)', fontSize: '14px',
+      fontWeight: '600', cursor: 'pointer'
     },
     endBtn: {
       padding: '8px 16px', borderRadius: '10px', border: 'none',
@@ -238,17 +310,15 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
       fontSize: '13px', fontWeight: '700', cursor: 'pointer', backdropFilter: 'blur(8px)'
     },
     title: { fontSize: '28px', fontWeight: '900', color: '#fff', marginBottom: '12px', letterSpacing: '-0.5px' },
-    subtitle: { fontSize: '15px', color: 'rgba(255,255,255,0.5)', marginBottom: '36px', lineHeight: '1.6' }
+    subtitle: { fontSize: '15px', color: 'rgba(255,255,255,0.45)', marginBottom: '32px', lineHeight: '1.6' }
   };
 
   return (
     <div style={s.container}>
-      {/* Glow Orbs */}
       <div style={s.glowOrb('#6366F1', '-10%', '-10%', 400)} />
       <div style={s.glowOrb('#8B5CF6', '60%', '70%', 350)} />
       <div style={s.glowOrb('#06B6D4', '80%', '-5%', 250)} />
 
-      {/* Back to campus button */}
       <button style={s.backBtn} onClick={() => { leaveQueue(); onExit(); }}>
         ← Back to Campus
       </button>
@@ -260,19 +330,12 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
           <motion.div key="idle" initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} style={s.card}>
             <div style={{ fontSize: '64px', marginBottom: '20px' }}>🎭</div>
             <h1 style={s.title}>Anonymous Chat</h1>
-            <p style={s.subtitle}>
-              Get matched instantly with a random campus peer. Completely anonymous — no names, no traces.
-            </p>
+            <p style={s.subtitle}>Get matched instantly with a random campus peer. Completely anonymous — no names, no traces.</p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '28px' }}>
-              {[
-                { icon: '🔒', label: 'Fully Anonymous' },
-                { icon: '⚡', label: 'Instant Match' },
-                { icon: '💬', label: 'Real-time Chat' },
-                { icon: '🚪', label: 'Exit Anytime' }
-              ].map((f, i) => (
+              {[{ icon: '🔒', label: 'Fully Anonymous' }, { icon: '⚡', label: 'Instant Match' }, { icon: '💬', label: 'Real-time Chat' }, { icon: '🚪', label: 'Exit Anytime' }].map((f, i) => (
                 <div key={i} style={{ background: 'rgba(99,102,241,0.08)', borderRadius: '14px', padding: '14px', border: '1px solid rgba(99,102,241,0.15)' }}>
                   <div style={{ fontSize: '22px', marginBottom: '4px' }}>{f.icon}</div>
-                  <div style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.6)', letterSpacing: '0.5px' }}>{f.label}</div>
+                  <div style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.6)' }}>{f.label}</div>
                 </div>
               ))}
             </div>
@@ -292,14 +355,11 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
             >
               🎭
             </motion.div>
-            <h1 style={{ ...s.title, fontSize: '22px' }}>
-              Finding a Stranger{'.'.repeat(dotCount)}
-            </h1>
+            <h1 style={{ ...s.title, fontSize: '22px' }}>Finding a Stranger{'.'.repeat(dotCount)}</h1>
             <p style={s.subtitle}>Scanning the campus for another anonymous soul...</p>
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '28px' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '32px' }}>
               {[0, 1, 2].map(i => (
-                <motion.div
-                  key={i}
+                <motion.div key={i}
                   animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
                   transition={{ delay: i * 0.2, repeat: Infinity, duration: 1 }}
                   style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#6366F1' }}
@@ -326,7 +386,7 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
 
             <div ref={scrollRef} style={s.messagesArea}>
               {messages.length === 0 && (
-                <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.3)', fontSize: '14px', marginTop: '40px' }}>
+                <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.3)', fontSize: '14px', marginTop: '60px' }}>
                   <div style={{ fontSize: '40px', marginBottom: '12px' }}>👋</div>
                   Say hello to your anonymous match!
                 </div>
@@ -376,11 +436,8 @@ const RandomChatScreen = ({ user, maskId, onExit }) => {
       </AnimatePresence>
 
       <CustomAlert
-        visible={alert.visible}
-        title={alert.title}
-        message={alert.message}
-        type={alert.type}
-        onClose={() => setAlert({ ...alert, visible: false })}
+        visible={alert.visible} title={alert.title} message={alert.message}
+        type={alert.type} onClose={() => setAlert({ ...alert, visible: false })}
       />
     </div>
   );

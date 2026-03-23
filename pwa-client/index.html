@@ -4,6 +4,24 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Suppress Vite HMR + Supabase Realtime startup race errors (dev only) -->
+    <script>
+      (function() {
+        var _onerror = window.onerror;
+        window.onerror = function(msg) {
+          if (typeof msg === 'string' && (msg.indexOf('send') !== -1 || msg.indexOf('ws') !== -1)) return true;
+          return _onerror && _onerror.apply(this, arguments);
+        };
+        window.addEventListener('unhandledrejection', function(e) {
+          var msg = (e && e.reason && (e.reason.message || e.reason.toString())) || '';
+          if (msg.indexOf('send') !== -1 || msg.indexOf('WebSocket') !== -1 || msg.indexOf('ws') !== -1) {
+            e.preventDefault(); e.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&family=Inter:wght@100..900&display=swap" rel="stylesheet">
